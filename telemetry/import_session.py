@@ -39,6 +39,8 @@ def import_csv(
     app_root: Path | None = None,
     delete_source: bool = False,
     notes: str = "",
+    session_type: str = "",
+    conditions: str = "",
 ) -> ImportResult:
     """
     Load a raw SRT CSV, store compact Parquet + SQLite metadata, optionally delete the CSV.
@@ -78,6 +80,9 @@ def import_csv(
 
     meta = session_meta(df)
     setup = mean_setup(df)
+    from .setup_history import compute_setup_fingerprint
+
+    setup_fp = compute_setup_fingerprint(setup)
     compact = compact_dataframe(df)
 
     data_dir = default_data_dir(root)
@@ -89,9 +94,22 @@ def import_csv(
 
     # Precompute coaching notes vs best lap for each lap
     best_lap = int(summary.loc[summary["is_best"], "lap"].iloc[0])
+    track = meta.get("track")
+    track_length = meta.get("track_length")
+    if track_length is not None:
+        try:
+            track_length = float(track_length)
+        except (TypeError, ValueError):
+            track_length = None
     insights_by_lap: dict[int, list[dict]] = {}
     for lap in summary["lap"].tolist():
-        notes_list = generate_insights(df, int(lap), reference_lap=best_lap)
+        notes_list = generate_insights(
+            df,
+            int(lap),
+            reference_lap=best_lap,
+            track=track,
+            track_length=track_length,
+        )
         insights_by_lap[int(lap)] = [
             {
                 "severity": n.severity,
@@ -115,12 +133,11 @@ def import_csv(
         stored_size=stored_size,
         source_deleted=False,
         app_root=root,
+        notes=notes,
+        session_type=session_type,
+        conditions=conditions,
+        setup_fingerprint=setup_fp,
     )
-
-    if notes:
-        from .db import update_session_notes
-
-        update_session_notes(session_id, notes, root)
 
     outline = extract_track_outline(df)
     if meta.get("track"):
@@ -152,6 +169,7 @@ def import_csv(
 
     saved = original_size - stored_size
     pb_note = " New personal best!" if progress.get("pb_updated") else ""
+    tag_note = f" Tagged {session_type}." if session_type else ""
     return ImportResult(
         session_id=session_id,
         already_existed=False,
@@ -168,6 +186,7 @@ def import_csv(
             f"(saved {_mb(saved)})."
             + (" Source CSV deleted." if source_deleted else "")
             + pb_note
+            + tag_note
         ),
     )
 
