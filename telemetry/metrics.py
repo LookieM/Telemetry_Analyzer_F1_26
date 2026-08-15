@@ -253,6 +253,20 @@ def mini_sector_table(aligned: pd.DataFrame, n: int = 20) -> pd.DataFrame:
     return sector_deltas(aligned, n_sectors=n).rename(columns={"sector": "mini_sector"})
 
 
+def sample_at_distance(lap_df: pd.DataFrame, distance: float) -> dict:
+    """Nearest telemetry sample to a lap distance (for cursor readout)."""
+    if lap_df.empty or "lap_distance" not in lap_df.columns:
+        return {}
+    dist = lap_df["lap_distance"].to_numpy(dtype=float)
+    idx = int(np.argmin(np.abs(dist - float(distance))))
+    row = lap_df.iloc[idx]
+    out: dict = {"distance": float(row["lap_distance"]), "index": idx}
+    for key in ("speed", "throttle", "brake", "gear", "steering", "lap_time", "rpm", "fuel"):
+        if key in lap_df.columns and pd.notna(row[key]):
+            out[key] = float(row[key])
+    return out
+
+
 def setup_snapshot(df: pd.DataFrame, lap: int | None = None) -> dict:
     slice_df = df if lap is None else df[df["lap"] == lap]
     return mean_setup(slice_df)
