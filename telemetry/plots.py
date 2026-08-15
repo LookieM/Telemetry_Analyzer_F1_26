@@ -9,13 +9,27 @@ from plotly.subplots import make_subplots
 
 
 DARK_LAYOUT = dict(
-    template="plotly_dark",
+    template="plotly_white",
     paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(17,24,39,0.6)",
-    font=dict(family="Segoe UI, sans-serif", color="#e5e7eb"),
+    plot_bgcolor="#F7F5F1",
+    font=dict(family="IBM Plex Sans, Segoe UI, sans-serif", color="#1A1A1A", size=12),
     margin=dict(l=40, r=20, t=40, b=40),
     legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    colorway=["#1A1A1A", "#C8102E", "#6B6B6B", "#2F6B4F", "#8A8680"],
 )
+
+# Restrained pit-wall palette (kept as DARK_LAYOUT name for call-site compatibility)
+INK = "#1A1A1A"
+ACCENT = "#C8102E"
+MUTED = "#6B6B6B"
+GREY = "#8A8680"
+BEST = "#2F6B4F"
+LOSS = "#C8102E"
+REF = "#1A1A1A"
+CMP = "#6B6B6B"
+MAP_SCALE = [[0, "#E8E4DE"], [0.5, "#A39E96"], [1, "#C8102E"]]
+DELTA_SCALE = [[0, "#2F6B4F"], [0.5, "#E8E4DE"], [1, "#C8102E"]]
+
 
 
 def _x_axis(df: pd.DataFrame) -> tuple[np.ndarray, str]:
@@ -30,7 +44,7 @@ def pace_chart(summary: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if summary.empty:
         return fig
-    colors = ["#22c55e" if b else "#38bdf8" for b in summary["is_best"]]
+    colors = [BEST if b else INK for b in summary["is_best"]]
     fig.add_trace(
         go.Bar(
             x=summary["lap"],
@@ -43,7 +57,7 @@ def pace_chart(summary: pd.DataFrame) -> go.Figure:
         )
     )
     best = summary.loc[summary["is_best"], "lap_time"].iloc[0]
-    fig.add_hline(y=best, line_dash="dot", line_color="#22c55e", annotation_text="Best")
+    fig.add_hline(y=best, line_dash="dot", line_color=BEST, annotation_text="Best")
     fig.update_layout(**DARK_LAYOUT, title="Lap times", height=360, yaxis_title="Lap time (s)")
     return fig
 
@@ -65,11 +79,48 @@ def track_outline_trace(outline: dict | None) -> go.Scatter | None:
         x=outline["x"],
         y=outline["y"],
         mode="lines",
-        line=dict(color="rgba(148,163,184,0.55)", width=6),
+        line=dict(color="rgba(26,26,26,0.25)", width=6),
         name="Track",
         hoverinfo="skip",
         showlegend=False,
     )
+
+
+def _map_hover_bundle(lap_df: pd.DataFrame, corners: list | None = None) -> tuple[np.ndarray, str, list[str]]:
+    """
+    customdata columns for map point inspection (index 0 = lap distance for click-to-pin).
+    Order: dist, speed, throttle%, brake%, gear, steering, lap_time
+    """
+    n = len(lap_df)
+    dist = (
+        lap_df["lap_distance"].to_numpy(dtype=float)
+        if "lap_distance" in lap_df.columns
+        else np.arange(n, dtype=float)
+    )
+
+    def col(name: str, scale: float = 1.0, default: float = float("nan")) -> np.ndarray:
+        if name not in lap_df.columns:
+            return np.full(n, default, dtype=float)
+        return lap_df[name].to_numpy(dtype=float) * scale
+
+    speed = col("speed")
+    thr = col("throttle", 100.0)
+    brk = col("brake", 100.0)
+    gear = col("gear")
+    steer = col("steering")
+    lt = col("lap_time")
+    corner_names = _corner_labels_for_x(dist, corners) if corners else [""] * n
+    custom = np.column_stack([dist, speed, thr, brk, gear, steer, lt])
+    template = (
+        "<b>%{hovertext}</b><br>"
+        "Dist %{customdata[0]:.0f} m<br>"
+        "Speed %{customdata[1]:.1f} km/h<br>"
+        "Thr %{customdata[2]:.0f}% · Brk %{customdata[3]:.0f}%<br>"
+        "Gear %{customdata[4]:.0f} · Steer %{customdata[5]:.2f}<br>"
+        "Lap time %{customdata[6]:.3f}s"
+        "<extra></extra>"
+    )
+    return custom, template, corner_names
 
 
 def track_map(
@@ -92,25 +143,26 @@ def track_map(
 
     x_col, y_col = axes
     color_vals = lap_df[color] if color and color in lap_df.columns else None
-    dist = lap_df["lap_distance"] if "lap_distance" in lap_df.columns else np.arange(len(lap_df))
-    custom = np.column_stack([dist, lap_df[x_col], lap_df[y_col]])
+    custom, hover_tmpl, corner_names = _map_hover_bundle(lap_df, corners)
+    hover_text = [c if c else "—" for c in corner_names]
 
     fig.add_trace(
         go.Scatter(
             x=lap_df[x_col],
             y=lap_df[y_col],
             mode="lines+markers",
-            line=dict(color="rgba(255,255,255,0.15)", width=2),
+            line=dict(color="rgba(26,26,26,0.12)", width=2),
             marker=dict(
-                size=4,
-                color=color_vals if color_vals is not None else "#38bdf8",
-                colorscale="Turbo",
+                size=5,
+                color=color_vals if color_vals is not None else INK,
+                colorscale=MAP_SCALE,
                 showscale=color_vals is not None,
                 colorbar=dict(title=color or "") if color_vals is not None else None,
             ),
             name="Line",
             customdata=custom,
-            hovertemplate="Dist %{customdata[0]:.0f} m<br>x=%{x:.1f}<br>y=%{y:.1f}<extra></extra>",
+            hovertext=hover_text,
+            hovertemplate=hover_tmpl,
         )
     )
 
@@ -126,10 +178,10 @@ def track_map(
                     x=[float(lap_df[x_col].iloc[idx])],
                     y=[float(lap_df[y_col].iloc[idx])],
                     mode="markers+text",
-                    marker=dict(size=8, color="#f8fafc", symbol="circle-open", line=dict(width=2, color="#e2e8f0")),
+                    marker=dict(size=8, color=INK, symbol="circle-open", line=dict(width=2, color=MUTED)),
                     text=[getattr(c, "id", "")],
                     textposition="top center",
-                    textfont=dict(size=10, color="#e2e8f0"),
+                    textfont=dict(size=10, color=MUTED),
                     name=getattr(c, "name", ""),
                     showlegend=False,
                     hovertemplate=f"{getattr(c, 'name', '')}<extra></extra>",
@@ -143,7 +195,7 @@ def track_map(
                 x=[float(lap_df[x_col].iloc[idx])],
                 y=[float(lap_df[y_col].iloc[idx])],
                 mode="markers",
-                marker=dict(size=16, color="#f43f5e", line=dict(width=2, color="white"), symbol="circle"),
+                marker=dict(size=16, color=ACCENT, line=dict(width=2, color=INK), symbol="circle"),
                 name="Cursor",
                 hovertemplate=f"Pinned · {highlight_distance:.0f} m<extra></extra>",
             )
@@ -155,6 +207,7 @@ def track_map(
         height=560,
         xaxis=dict(scaleanchor="y", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, title=""),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
+        clickmode="event+select",
     )
     return fig
 
@@ -169,16 +222,39 @@ def delta_map(aligned: pd.DataFrame, outline: dict | None = None) -> go.Figure:
     if "delta_gain" in plot_df.columns:
         plot_df["map_color"] = plot_df["delta_gain"]
         title = "Track map (green = gaining vs ref)"
-        scale = "RdYlGn"
+        scale = DELTA_SCALE
     else:
         plot_df["map_color"] = plot_df["delta_time"]
         title = "Track map (cumulative delta)"
-        scale = "RdYlGn_r"
+        scale = DELTA_SCALE
 
     fig = go.Figure()
     outline_tr = track_outline_trace(outline)
     if outline_tr is not None:
         fig.add_trace(outline_tr)
+
+    n = len(plot_df)
+    dist = (
+        plot_df["lap_distance"].to_numpy(dtype=float)
+        if "lap_distance" in plot_df.columns
+        else np.arange(n, dtype=float)
+    )
+    speed = (
+        plot_df["cmp_speed"].to_numpy(dtype=float)
+        if "cmp_speed" in plot_df.columns
+        else (
+            plot_df["speed"].to_numpy(dtype=float)
+            if "speed" in plot_df.columns
+            else np.full(n, float("nan"))
+        )
+    )
+    delta = plot_df["delta_time"].to_numpy(dtype=float)
+    gain = (
+        plot_df["delta_gain"].to_numpy(dtype=float)
+        if "delta_gain" in plot_df.columns
+        else np.full(n, float("nan"))
+    )
+    custom = np.column_stack([dist, delta, gain, speed])
 
     fig.add_trace(
         go.Scatter(
@@ -186,14 +262,21 @@ def delta_map(aligned: pd.DataFrame, outline: dict | None = None) -> go.Figure:
             y=plot_df[y_col],
             mode="markers",
             marker=dict(
-                size=4,
+                size=5,
                 color=plot_df["map_color"],
                 colorscale=scale,
                 showscale=True,
                 colorbar=dict(title="Δ"),
             ),
             name="Delta",
-            hovertemplate="Δ=%{marker.color:.3f}<extra></extra>",
+            customdata=custom,
+            hovertemplate=(
+                "Dist %{customdata[0]:.0f} m<br>"
+                "Δt %{customdata[1]:+.3f}s<br>"
+                "Instant %{customdata[2]:+.3f}s<br>"
+                "Speed %{customdata[3]:.1f} km/h"
+                "<extra></extra>"
+            ),
         )
     )
     fig.update_layout(
@@ -202,6 +285,7 @@ def delta_map(aligned: pd.DataFrame, outline: dict | None = None) -> go.Figure:
         height=560,
         xaxis=dict(scaleanchor="y", scaleratio=1, showgrid=False, zeroline=False, showticklabels=False, title=""),
         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
+        clickmode="event+select",
     )
     return fig
 
@@ -211,7 +295,7 @@ def track_library_map(outline: dict | None, title: str = "Circuit map") -> go.Fi
     tr = track_outline_trace(outline)
     if tr is not None:
         # Stronger outline for the library map view
-        tr.line.color = "#38bdf8"
+        tr.line.color = INK
         tr.line.width = 3
         fig.add_trace(tr)
     fig.update_layout(
@@ -260,7 +344,7 @@ def single_lap_telemetry(
                 x=x,
                 y=lap_df["speed"],
                 name="Speed",
-                line=dict(color="#22d3ee", width=2),
+                line=dict(color=INK, width=2),
                 customdata=custom,
                 hovertemplate=hover,
             ),
@@ -273,7 +357,7 @@ def single_lap_telemetry(
                 x=x,
                 y=lap_df["throttle"],
                 name="Throttle",
-                line=dict(color="#22c55e", width=2),
+                line=dict(color=BEST, width=2),
                 customdata=custom,
                 hovertemplate=hover,
             ),
@@ -286,7 +370,7 @@ def single_lap_telemetry(
                 x=x,
                 y=lap_df["brake"],
                 name="Brake",
-                line=dict(color="#ef4444", width=2),
+                line=dict(color=LOSS, width=2),
                 customdata=custom,
                 hovertemplate=hover,
             ),
@@ -299,7 +383,7 @@ def single_lap_telemetry(
                 x=x,
                 y=lap_df["gear"],
                 name="Gear",
-                line=dict(color="#f59e0b", width=2, shape="vh"),
+                line=dict(color=MUTED, width=2, shape="vh"),
                 customdata=custom,
                 hovertemplate=hover,
             ),
@@ -312,7 +396,7 @@ def single_lap_telemetry(
                 x=x,
                 y=lap_df["steering"],
                 name="Steering",
-                line=dict(color="#2dd4bf", width=2),
+                line=dict(color=MUTED, width=2),
                 customdata=custom,
                 hovertemplate=hover,
             ),
@@ -327,7 +411,7 @@ def single_lap_telemetry(
                 x=highlight_distance,
                 line_width=2,
                 line_dash="dot",
-                line_color="#f43f5e",
+                line_color=ACCENT,
                 row=r,
                 col=1,
             )
@@ -374,24 +458,24 @@ def telemetry_overlay(
         )
 
     if "ref_speed" in aligned.columns:
-        _add(aligned["ref_speed"], f"Speed {ref_label}", "#38bdf8", 1)
+        _add(aligned["ref_speed"], f"Speed {ref_label}", REF, 1)
     if "cmp_speed" in aligned.columns:
-        _add(aligned["cmp_speed"], f"Speed {cmp_label}", "#f97316", 1)
+        _add(aligned["cmp_speed"], f"Speed {cmp_label}", ACCENT, 1)
     if "ref_throttle" in aligned.columns:
-        _add(aligned["ref_throttle"], f"Thr {ref_label}", "#4ade80", 2)
+        _add(aligned["ref_throttle"], f"Thr {ref_label}", REF, 2)
     if "cmp_throttle" in aligned.columns:
-        _add(aligned["cmp_throttle"], f"Thr {cmp_label}", "#86efac", 2, dash="dot")
+        _add(aligned["cmp_throttle"], f"Thr {cmp_label}", MUTED, 2, dash="dot")
     if "ref_brake" in aligned.columns:
-        _add(aligned["ref_brake"], f"Brk {ref_label}", "#ef4444", 2)
+        _add(aligned["ref_brake"], f"Brk {ref_label}", LOSS, 2)
     if "cmp_brake" in aligned.columns:
-        _add(aligned["cmp_brake"], f"Brk {cmp_label}", "#fca5a5", 2, dash="dot")
+        _add(aligned["cmp_brake"], f"Brk {cmp_label}", GREY, 2, dash="dot")
     if "delta_time" in aligned.columns:
         fig.add_trace(
             go.Scatter(
                 x=x,
                 y=aligned["delta_time"],
                 name="Δ time",
-                line=dict(color="#a78bfa", width=2),
+                line=dict(color=ACCENT, width=2),
                 fill="tozeroy",
                 customdata=custom,
                 hovertemplate=hover,
@@ -400,13 +484,13 @@ def telemetry_overlay(
             col=1,
         )
     if "ref_gear" in aligned.columns:
-        _add(aligned["ref_gear"], f"Gear {ref_label}", "#fbbf24", 4, shape="vh")
+        _add(aligned["ref_gear"], f"Gear {ref_label}", REF, 4, shape="vh")
     if "cmp_gear" in aligned.columns:
-        _add(aligned["cmp_gear"], f"Gear {cmp_label}", "#fde68a", 4, dash="dot", shape="vh")
+        _add(aligned["cmp_gear"], f"Gear {cmp_label}", MUTED, 4, dash="dot", shape="vh")
     if "ref_steering" in aligned.columns:
-        _add(aligned["ref_steering"], f"Steer {ref_label}", "#2dd4bf", 5)
+        _add(aligned["ref_steering"], f"Steer {ref_label}", REF, 5)
     if "cmp_steering" in aligned.columns:
-        _add(aligned["cmp_steering"], f"Steer {cmp_label}", "#99f6e4", 5, dash="dot")
+        _add(aligned["cmp_steering"], f"Steer {cmp_label}", GREY, 5, dash="dot")
 
     _add_corner_vlines(fig, corners, rows=5)
     if highlight_distance is not None:
@@ -415,7 +499,7 @@ def telemetry_overlay(
                 x=highlight_distance,
                 line_width=2,
                 line_dash="dot",
-                line_color="#f43f5e",
+                line_color=ACCENT,
                 row=r,
                 col=1,
             )
@@ -449,7 +533,7 @@ def _add_corner_vlines(fig: go.Figure, corners: list | None, rows: int) -> None:
                 x=float(c.start),
                 line_width=1,
                 line_dash="dot",
-                line_color="rgba(148,163,184,0.35)",
+                line_color="rgba(26,26,26,0.25)",
                 row=r,
                 col=1,
             )
@@ -461,7 +545,7 @@ def corner_delta_bars(compared: pd.DataFrame) -> go.Figure:
         fig.update_layout(**DARK_LAYOUT, title="Corner delta", height=360)
         return fig
     data = compared[compared["kind"] == "corner"].copy() if "kind" in compared.columns else compared.copy()
-    colors = ["#22c55e" if v < 0 else "#ef4444" for v in data["delta_s"].fillna(0)]
+    colors = [BEST if v < 0 else LOSS for v in data["delta_s"].fillna(0)]
     fig.add_trace(
         go.Bar(
             x=data["corner_id"],
@@ -487,7 +571,7 @@ def pb_history_chart(history: pd.DataFrame) -> go.Figure:
             x=h["set_at"],
             y=h["lap_time"],
             mode="lines+markers",
-            line=dict(color="#22c55e", width=2),
+            line=dict(color=BEST, width=2),
             marker=dict(size=9),
             name="PB progression",
             hovertemplate="%{x}<br>%{y:.3f}s<extra></extra>",
@@ -508,7 +592,7 @@ def session_bests_chart(sessions: pd.DataFrame) -> go.Figure:
             x=s["created_at"],
             y=s["best_lap_time"],
             mode="lines+markers",
-            line=dict(color="#38bdf8", width=2),
+            line=dict(color=INK, width=2),
             marker=dict(size=8),
             name="Session best",
             customdata=s["id"],
@@ -531,16 +615,16 @@ def gg_diagram(lap_df: pd.DataFrame) -> go.Figure:
             mode="markers",
             marker=dict(
                 size=3,
-                color=lap_df["speed"] if "speed" in lap_df.columns else "#38bdf8",
-                colorscale="Turbo",
+                color=lap_df["speed"] if "speed" in lap_df.columns else INK,
+                colorscale=MAP_SCALE,
                 showscale=True,
                 colorbar=dict(title="km/h"),
             ),
             name="G-G",
         )
     )
-    fig.add_vline(x=0, line_color="#6b7280", line_width=1)
-    fig.add_hline(y=0, line_color="#6b7280", line_width=1)
+    fig.add_vline(x=0, line_color=GREY, line_width=1)
+    fig.add_hline(y=0, line_color=GREY, line_width=1)
     fig.update_layout(
         **DARK_LAYOUT,
         title="Traction circle (G-G)",
@@ -555,7 +639,7 @@ def gg_diagram(lap_df: pd.DataFrame) -> go.Figure:
 def tyre_temps_plot(lap_df: pd.DataFrame) -> go.Figure:
     x, x_title = _x_axis(lap_df)
     fig = go.Figure()
-    colors = {"RL": "#60a5fa", "RR": "#a78bfa", "FL": "#34d399", "FR": "#fbbf24"}
+    colors = {"RL": INK, "RR": ACCENT, "FL": BEST, "FR": MUTED}
     for i, lab in enumerate(["RL", "RR", "FL", "FR"]):
         col = f"tyre_temp_{i}"
         if col in lap_df.columns:
@@ -571,7 +655,7 @@ def tyre_wear_bars(lap_df: pd.DataFrame) -> go.Figure:
         if col in lap_df.columns:
             labels.append(lab)
             values.append(float(lap_df[col].iloc[-1]) * 100)
-    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=["#60a5fa", "#a78bfa", "#34d399", "#fbbf24"]))
+    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=[INK, ACCENT, BEST, MUTED]))
     fig.update_layout(**DARK_LAYOUT, title="Tyre wear at end of lap (%)", height=320, yaxis_title="%")
     return fig
 
@@ -591,7 +675,7 @@ def ers_plot(lap_df: pd.DataFrame) -> go.Figure:
     )
     if "ers_store_mj" in lap.columns:
         fig.add_trace(
-            go.Scatter(x=x, y=lap["ers_store_mj"], name="Store (MJ)", line=dict(color="#c084fc", width=2)),
+            go.Scatter(x=x, y=lap["ers_store_mj"], name="Store (MJ)", line=dict(color=MUTED, width=2)),
             row=1,
             col=1,
         )
@@ -601,13 +685,13 @@ def ers_plot(lap_df: pd.DataFrame) -> go.Figure:
                 x=x,
                 y=lap["ers_deployMode"],
                 name="Mode",
-                line=dict(color="#f472b6", width=2, shape="vh"),
+                line=dict(color=ACCENT, width=2, shape="vh"),
             ),
             row=2,
             col=1,
         )
     if "ers_dstore" in lap.columns:
-        colors = np.where(lap["ers_dstore"] >= 0, "#34d399", "#f87171")
+        colors = np.where(lap["ers_dstore"] >= 0, BEST, LOSS)
         fig.add_trace(
             go.Bar(x=x, y=lap["ers_dstore"], name="Δ MJ", marker_color=colors, showlegend=False),
             row=3,
@@ -633,7 +717,7 @@ def ers_session_scatter(table: pd.DataFrame) -> go.Figure:
             marker=dict(
                 size=12,
                 color=table["deployed_mj"],
-                colorscale="Plasma",
+                colorscale=MAP_SCALE,
                 showscale=True,
                 colorbar=dict(title="Deployed MJ"),
             ),
@@ -668,7 +752,7 @@ def ers_profile_bars(profile: pd.DataFrame, title: str = "Deploy / harvest along
             x=profile["dist_mid"],
             y=profile["deployed_mj"],
             name="Deployed",
-            marker_color="#f87171",
+            marker_color=LOSS,
         )
     )
     fig.add_trace(
@@ -676,7 +760,7 @@ def ers_profile_bars(profile: pd.DataFrame, title: str = "Deploy / harvest along
             x=profile["dist_mid"],
             y=profile["harvested_mj"],
             name="Harvested",
-            marker_color="#34d399",
+            marker_color=BEST,
         )
     )
     fig.update_layout(
@@ -697,7 +781,7 @@ def ers_advice_map(advice: pd.DataFrame, outline_lap: pd.DataFrame | None = None
         fig.update_layout(**DARK_LAYOUT, title="Recommended energy map", height=420)
         return fig
 
-    color_map = {"DEPLOY": "#f43f5e", "HARVEST": "#22c55e", "HOLD": "#94a3b8"}
+    color_map = {"DEPLOY": ACCENT, "HARVEST": BEST, "HOLD": GREY}
     if (
         outline_lap is not None
         and not outline_lap.empty
@@ -711,7 +795,7 @@ def ers_advice_map(advice: pd.DataFrame, outline_lap: pd.DataFrame | None = None
         for d in lap["lap_distance"]:
             row = advice.iloc[(advice["dist_mid"] - d).abs().argmin()]
             labels.append(row["advice"])
-            colors.append(color_map.get(row["advice"], "#94a3b8"))
+            colors.append(color_map.get(row["advice"], GREY))
         fig.add_trace(
             go.Scatter(
                 x=lap["pos_x"],
@@ -735,7 +819,7 @@ def ers_advice_map(advice: pd.DataFrame, outline_lap: pd.DataFrame | None = None
             go.Bar(
                 x=[f"{a:.0f}" for a in advice["dist_mid"]],
                 y=advice["spend_score"],
-                marker_color=[color_map.get(a, "#94a3b8") for a in advice["advice"]],
+                marker_color=[color_map.get(a, GREY) for a in advice["advice"]],
                 text=advice["advice"],
                 textposition="outside",
             )
@@ -749,8 +833,8 @@ def ers_corner_bars(corner_ers: pd.DataFrame) -> go.Figure:
     if corner_ers.empty:
         fig.update_layout(**DARK_LAYOUT, title="ERS by corner", height=360)
         return fig
-    fig.add_trace(go.Bar(x=corner_ers["corner_id"], y=corner_ers["deployed_mj"], name="Deploy", marker_color="#f87171"))
-    fig.add_trace(go.Bar(x=corner_ers["corner_id"], y=corner_ers["harvested_mj"], name="Harvest", marker_color="#34d399"))
+    fig.add_trace(go.Bar(x=corner_ers["corner_id"], y=corner_ers["deployed_mj"], name="Deploy", marker_color=LOSS))
+    fig.add_trace(go.Bar(x=corner_ers["corner_id"], y=corner_ers["harvested_mj"], name="Harvest", marker_color=BEST))
     fig.update_layout(**DARK_LAYOUT, title="ERS by corner / segment", height=380, barmode="group", yaxis_title="MJ")
     return fig
 
@@ -759,7 +843,7 @@ def sector_bar(sectors: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     if sectors.empty:
         return fig
-    colors = ["#22c55e" if v < 0 else "#ef4444" for v in sectors["delta_s"]]
+    colors = [BEST if v < 0 else LOSS for v in sectors["delta_s"]]
     fig.add_trace(
         go.Bar(
             x=[f"S{s}" for s in sectors["sector"]],
@@ -779,12 +863,12 @@ def fuel_tyre_stint(summary: pd.DataFrame) -> go.Figure:
         return fig
     if "fuel_end" in summary.columns:
         fig.add_trace(
-            go.Scatter(x=summary["lap"], y=summary["fuel_end"], name="Fuel", line=dict(color="#38bdf8")),
+            go.Scatter(x=summary["lap"], y=summary["fuel_end"], name="Fuel", line=dict(color=INK)),
             secondary_y=False,
         )
     if "tyre_wear_avg" in summary.columns:
         fig.add_trace(
-            go.Scatter(x=summary["lap"], y=summary["tyre_wear_avg"], name="Tyre wear %", line=dict(color="#f97316")),
+            go.Scatter(x=summary["lap"], y=summary["tyre_wear_avg"], name="Tyre wear %", line=dict(color=ACCENT)),
             secondary_y=True,
         )
     fig.update_layout(**DARK_LAYOUT, title="Stint: fuel & tyre wear", height=340)
@@ -798,7 +882,7 @@ def setup_delta_bars(est_df: pd.DataFrame) -> go.Figure:
     if est_df.empty or "Est. Δt (s)" not in est_df.columns:
         fig.update_layout(**DARK_LAYOUT, title="Setup Δt by parameter", height=360)
         return fig
-    colors = ["#22c55e" if v < 0 else "#ef4444" for v in est_df["Est. Δt (s)"]]
+    colors = [BEST if v < 0 else LOSS for v in est_df["Est. Δt (s)"]]
     fig.add_trace(
         go.Bar(
             x=est_df["Parameter"],
@@ -827,7 +911,7 @@ def setup_breakdown_pie(breakdown: dict) -> go.Figure:
         go.Bar(
             x=[k for k, _ in items],
             y=[v for _, v in items],
-            marker_color=["#22c55e" if v < 0 else "#f87171" for _, v in items],
+            marker_color=[BEST if v < 0 else LOSS for _, v in items],
             text=[f"{v:+.3f}" for _, v in items],
             textposition="outside",
         )
@@ -850,8 +934,8 @@ def stint_efficiency_chart(table: pd.DataFrame) -> go.Figure:
             textposition="top center",
             marker=dict(
                 size=12,
-                color=table["stint_score"] if "stint_score" in table.columns else "#38bdf8",
-                colorscale="Viridis",
+                color=table["stint_score"] if "stint_score" in table.columns else INK,
+                colorscale=MAP_SCALE,
                 showscale=True,
                 colorbar=dict(title="Score"),
             ),
@@ -883,13 +967,13 @@ def active_aero_plot(lap_df: pd.DataFrame) -> go.Figure:
             x=x,
             y=lap["activeAero_mode"],
             name="Aero mode",
-            line=dict(color="#38bdf8", width=2, shape="vh"),
+            line=dict(color=INK, width=2, shape="vh"),
         ),
         secondary_y=False,
     )
     if "speed" in lap.columns:
         fig.add_trace(
-            go.Scatter(x=x, y=lap["speed"], name="Speed", line=dict(color="#94a3b8", width=1), opacity=0.7),
+            go.Scatter(x=x, y=lap["speed"], name="Speed", line=dict(color=GREY, width=1), opacity=0.7),
             secondary_y=True,
         )
     fig.update_layout(**DARK_LAYOUT, title="Active aero vs distance (1 = low drag)", height=360, hovermode="x unified")
@@ -909,7 +993,7 @@ def active_aero_profile_bars(profile: pd.DataFrame, ref_profile: pd.DataFrame | 
             x=profile["dist_mid"],
             y=profile["low_drag_pct"],
             name="Focus low-drag %",
-            marker_color="#38bdf8",
+            marker_color=INK,
         )
     )
     if ref_profile is not None and not ref_profile.empty:
@@ -918,7 +1002,7 @@ def active_aero_profile_bars(profile: pd.DataFrame, ref_profile: pd.DataFrame | 
                 x=ref_profile["dist_mid"],
                 y=ref_profile["low_drag_pct"],
                 name="Ref low-drag %",
-                marker_color="#64748b",
+                marker_color=GREY,
             )
         )
     fig.update_layout(
@@ -938,10 +1022,10 @@ def power_split_plot(profile: pd.DataFrame) -> go.Figure:
         fig.update_layout(**DARK_LAYOUT, title="ICE vs MGUK power", height=380)
         return fig
     fig.add_trace(
-        go.Bar(x=profile["dist_mid"], y=profile["ice_kw"], name="ICE (kW)", marker_color="#fbbf24")
+        go.Bar(x=profile["dist_mid"], y=profile["ice_kw"], name="ICE (kW)", marker_color=MUTED)
     )
     fig.add_trace(
-        go.Bar(x=profile["dist_mid"], y=profile["mguk_kw"], name="MGUK (kW)", marker_color="#c084fc")
+        go.Bar(x=profile["dist_mid"], y=profile["mguk_kw"], name="MGUK (kW)", marker_color=MUTED)
     )
     fig.update_layout(
         **DARK_LAYOUT,
@@ -965,19 +1049,19 @@ def overtake_soc_plot(lap_df: pd.DataFrame) -> go.Figure:
     x = tl["lap_distance"]
     if "ot_allowed" in tl.columns:
         fig.add_trace(
-            go.Scatter(x=x, y=tl["ot_allowed"], name="Allowed", line=dict(color="#94a3b8", shape="vh")),
+            go.Scatter(x=x, y=tl["ot_allowed"], name="Allowed", line=dict(color=GREY, shape="vh")),
             row=1,
             col=1,
         )
     if "ot_active" in tl.columns:
         fig.add_trace(
-            go.Scatter(x=x, y=tl["ot_active"], name="Used", line=dict(color="#f472b6", shape="vh", width=2)),
+            go.Scatter(x=x, y=tl["ot_active"], name="Used", line=dict(color=ACCENT, shape="vh", width=2)),
             row=1,
             col=1,
         )
     if "ers_store_mj" in tl.columns:
         fig.add_trace(
-            go.Scatter(x=x, y=tl["ers_store_mj"], name="SOC (MJ)", line=dict(color="#c084fc", width=2)),
+            go.Scatter(x=x, y=tl["ers_store_mj"], name="SOC (MJ)", line=dict(color=MUTED, width=2)),
             row=2,
             col=1,
         )
@@ -997,7 +1081,7 @@ def fuel_window_plot(summary: pd.DataFrame, projection: pd.DataFrame, fuel_windo
                 y=summary["fuel_end"],
                 name="Fuel (actual)",
                 mode="lines+markers",
-                line=dict(color="#38bdf8", width=2),
+                line=dict(color=INK, width=2),
             )
         )
     if projection is not None and not projection.empty and projection["fuel_proj"].notna().any():
@@ -1007,17 +1091,17 @@ def fuel_window_plot(summary: pd.DataFrame, projection: pd.DataFrame, fuel_windo
                 y=projection["fuel_proj"],
                 name="Fuel (projected)",
                 mode="lines",
-                line=dict(color="#38bdf8", width=2, dash="dash"),
+                line=dict(color=INK, width=2, dash="dash"),
             )
         )
     if fuel_window is not None and getattr(fuel_window, "target_laps", None) is not None:
         fig.add_vline(
             x=fuel_window.target_laps - 1,
             line_dash="dot",
-            line_color="#fbbf24",
+            line_color=MUTED,
             annotation_text="Target",
         )
-    fig.add_hline(y=0, line_dash="dot", line_color="#f87171")
+    fig.add_hline(y=0, line_dash="dot", line_color=LOSS)
     fig.update_layout(**DARK_LAYOUT, title="Fuel remaining window", height=360, xaxis_title="Lap", yaxis_title="Fuel")
     return fig
 
@@ -1032,7 +1116,7 @@ def tyre_cliff_plot(summary: pd.DataFrame, projection: pd.DataFrame, tyre_cliff=
                 y=wear,
                 name="Wear % (actual)",
                 mode="lines+markers",
-                line=dict(color="#f97316", width=2),
+                line=dict(color=ACCENT, width=2),
             )
         )
     if projection is not None and not projection.empty and projection["wear_proj_pct"].notna().any():
@@ -1042,10 +1126,10 @@ def tyre_cliff_plot(summary: pd.DataFrame, projection: pd.DataFrame, tyre_cliff=
                 y=projection["wear_proj_pct"],
                 name="Wear % (projected)",
                 mode="lines",
-                line=dict(color="#f97316", width=2, dash="dash"),
+                line=dict(color=ACCENT, width=2, dash="dash"),
             )
         )
     cliff = getattr(tyre_cliff, "cliff_wear_pct", 55.0) if tyre_cliff is not None else 55.0
-    fig.add_hline(y=cliff, line_dash="dot", line_color="#ef4444", annotation_text=f"Cliff {cliff:.0f}%")
+    fig.add_hline(y=cliff, line_dash="dot", line_color=LOSS, annotation_text=f"Cliff {cliff:.0f}%")
     fig.update_layout(**DARK_LAYOUT, title="Tyre wear cliff projection", height=360, xaxis_title="Lap", yaxis_title="Wear %")
     return fig

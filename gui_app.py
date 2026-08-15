@@ -55,6 +55,7 @@ from telemetry.metrics import (
     build_lap_summary,
     compute_time_delta,
     get_lap,
+    sample_at_distance,
     sector_deltas,
     setup_snapshot,
 )
@@ -94,8 +95,8 @@ def _open_garage_for_track(track: str) -> None:
 
 
 st.set_page_config(
-    page_title="F1 26 Telemetry Analyzer",
-    page_icon="🏎️",
+    page_title="TELEMETRIA · F1 26",
+    page_icon="T",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -103,11 +104,142 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.2rem; }
-    div[data-testid="stMetricValue"] { font-size: 1.4rem; }
-    .insight-tip { border-left: 3px solid #38bdf8; padding: 0.4rem 0.8rem; margin: 0.4rem 0; background: rgba(56,189,248,0.08); }
-    .insight-warning { border-left: 3px solid #f59e0b; padding: 0.4rem 0.8rem; margin: 0.4rem 0; background: rgba(245,158,11,0.08); }
-    .insight-info { border-left: 3px solid #6b7280; padding: 0.4rem 0.8rem; margin: 0.4rem 0; background: rgba(107,114,128,0.08); }
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+    :root {
+        --ink: #1A1A1A;
+        --muted: #5C5C5C;
+        --paper: #F4F2EF;
+        --sidebar: #EBE8E3;
+        --rule: #D4D0C8;
+        --accent: #C8102E;
+        --font-sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+        --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+    }
+
+    html, body, [class*="css"] {
+        font-family: var(--font-sans);
+        color: var(--ink);
+    }
+
+    .stApp {
+        background: var(--paper);
+    }
+
+    [data-testid="stSidebar"] {
+        background: var(--sidebar);
+        border-right: 1px solid var(--rule);
+    }
+
+    [data-testid="stSidebar"] * {
+        font-family: var(--font-sans);
+    }
+
+    .block-container {
+        padding-top: 1.4rem;
+        padding-bottom: 2.5rem;
+        max-width: 1400px;
+    }
+
+    h1, h2, h3 {
+        font-family: var(--font-sans) !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.02em;
+        color: var(--ink) !important;
+    }
+
+    .brand-mark {
+        font-family: var(--font-sans);
+        font-weight: 700;
+        font-size: 1.65rem;
+        letter-spacing: 0.14em;
+        color: var(--ink);
+        margin: 0 0 0.15rem 0;
+        line-height: 1.1;
+    }
+
+    .brand-sub {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--muted);
+        letter-spacing: 0.04em;
+        margin: 0 0 1rem 0;
+    }
+
+    div[data-testid="stMetricValue"] {
+        font-family: var(--font-mono) !important;
+        font-size: 1.15rem !important;
+        font-weight: 500 !important;
+        color: var(--ink) !important;
+    }
+
+    div[data-testid="stMetricLabel"] {
+        font-family: var(--font-sans) !important;
+        color: var(--muted) !important;
+        font-size: 0.8rem !important;
+    }
+
+    .insight-tip, .insight-warning, .insight-info {
+        border-left: 2px solid #1A1A1A;
+        padding: 0.55rem 0.85rem;
+        margin: 0.45rem 0;
+        background: transparent;
+        border-top: none;
+        border-right: none;
+        border-bottom: 1px solid var(--rule);
+        font-size: 0.92rem;
+        line-height: 1.45;
+        color: var(--ink);
+    }
+
+    .insight-warning {
+        border-left-color: var(--accent);
+    }
+
+    .insight-tip strong, .insight-warning strong, .insight-info strong {
+        font-weight: 600;
+        letter-spacing: -0.01em;
+    }
+
+    /* Primary actions → signal red */
+    div[data-testid="stButton"] > button[kind="primary"],
+    button[data-testid="baseButton-primary"] {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+        color: #fff !important;
+        font-family: var(--font-sans) !important;
+        font-weight: 500 !important;
+        border-radius: 2px !important;
+    }
+
+    div[data-testid="stButton"] > button[kind="secondary"],
+    button[data-testid="baseButton-secondary"] {
+        border-radius: 2px !important;
+        border-color: #B8B3AA !important;
+        font-family: var(--font-sans) !important;
+    }
+
+    /* Tabs / radios: quieter */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.25rem;
+        border-bottom: 1px solid var(--rule);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        font-family: var(--font-sans);
+        font-weight: 500;
+    }
+
+    hr {
+        border-color: var(--rule) !important;
+        margin: 1.2rem 0 !important;
+    }
+
+    /* Dataframes: less glossy */
+    [data-testid="stDataFrame"] {
+        border: 1px solid var(--rule);
+        border-radius: 2px;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -199,6 +331,37 @@ def distance_from_plotly_event(event) -> float | None:
             except (TypeError, ValueError):
                 return None
     return None
+
+
+def apply_map_cursor_pick(event, key: str = "cursor_distance") -> bool:
+    """If the plotly selection has a distance, pin the lap cursor and request rerun."""
+    picked = distance_from_plotly_event(event)
+    if picked is None:
+        return False
+    if abs(picked - float(st.session_state.get(key, 0.0))) > 0.75:
+        st.session_state[key] = float(picked)
+        st.rerun()
+    return True
+
+
+def render_cursor_telemetry(lap_df: pd.DataFrame, distance: float, corner_name: str | None = None) -> None:
+    """Pinned-point channel readout (updates on click / scrub, not mid-hover)."""
+    sample = sample_at_distance(lap_df, distance)
+    st.markdown("**Telemetry at cursor**")
+    st.caption("Hover the map for a live tip · click to pin here")
+    if not sample:
+        st.write("No sample at this distance.")
+        return
+    r1 = st.columns(4)
+    r1[0].metric("Distance", f"{sample.get('distance', distance):.0f} m")
+    r1[1].metric("Corner", corner_name or "—")
+    r1[2].metric("Speed", f"{sample['speed']:.1f} km/h" if "speed" in sample else "—")
+    r1[3].metric("Lap time", f"{sample['lap_time']:.3f}s" if "lap_time" in sample else "—")
+    r2 = st.columns(4)
+    r2[0].metric("Throttle", f"{sample['throttle'] * 100:.0f}%" if "throttle" in sample else "—")
+    r2[1].metric("Brake", f"{sample['brake'] * 100:.0f}%" if "brake" in sample else "—")
+    r2[2].metric("Gear", f"{sample['gear']:.0f}" if "gear" in sample else "—")
+    r2[3].metric("Steering", f"{sample['steering']:.2f}" if "steering" in sample else "—")
 
 
 def sidebar_import() -> None:
@@ -672,7 +835,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         st.markdown("---")
         st.subheader("Lap cursor")
-        st.caption("Click a point on a telemetry graph, or scrub distance — the red marker shows where you are on track.")
+        st.caption("Hover the map for channels · click map or graph to pin · scrub distance below.")
         max_dist = float(track_length or 5408)
         if "cursor_distance" not in st.session_state:
             st.session_state["cursor_distance"] = 0.0
@@ -772,7 +935,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         color = "speed" if map_color == "delta" else map_color
         m1, m2 = st.columns([1.2, 1])
         with m1:
-            st.plotly_chart(
+            map_event = st.plotly_chart(
                 plots.track_map(
                     focus_df,
                     color=color,
@@ -783,15 +946,23 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 ),
                 use_container_width=True,
                 key="chart_race_map_lap",
+                on_select="rerun",
+                selection_mode="points",
             )
+            apply_map_cursor_pick(map_event)
         with m2:
+            render_cursor_telemetry(
+                focus_df,
+                cursor,
+                corner_name=corner_here.name if corner_here else None,
+            )
             st.plotly_chart(
                 plots.track_library_map(outline, title=f"{track or 'Track'} outline"),
                 use_container_width=True,
                 key="chart_race_map_outline",
             )
             if corner_here:
-                st.info(f"**{corner_here.name}** · {corner_here.start:.0f}–{corner_here.end:.0f} m")
+                st.caption(f"{corner_here.name} · {corner_here.start:.0f}–{corner_here.end:.0f} m")
 
     with tab_corners:
         if focus_corners.empty:
@@ -839,14 +1010,17 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             m1, m2 = st.columns(2)
             with m1:
                 if map_color == "delta" and not aligned.empty:
-                    st.plotly_chart(
+                    delta_event = st.plotly_chart(
                         plots.delta_map(aligned, outline=outline),
                         use_container_width=True,
                         key="chart_compare_delta_map",
+                        on_select="rerun",
+                        selection_mode="points",
                     )
+                    apply_map_cursor_pick(delta_event)
                 else:
                     color = map_color if map_color != "delta" else "speed"
-                    st.plotly_chart(
+                    cmp_map_event = st.plotly_chart(
                         plots.track_map(
                             focus_df,
                             color=color,
@@ -857,7 +1031,10 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                         ),
                         use_container_width=True,
                         key="chart_compare_track_map",
+                        on_select="rerun",
+                        selection_mode="points",
                     )
+                    apply_map_cursor_pick(cmp_map_event)
             with m2:
                 st.plotly_chart(plots.sector_bar(sectors), use_container_width=True, key="chart_compare_sectors")
                 if not mini.empty:
@@ -880,10 +1057,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 on_select="rerun",
                 selection_mode="points",
             )
-            picked = distance_from_plotly_event(event)
-            if picked is not None and abs(picked - float(st.session_state.get("cursor_distance", 0.0))) > 0.75:
-                st.session_state["cursor_distance"] = float(picked)
-                st.rerun()
+            apply_map_cursor_pick(event)
 
     with tab_xsess:
         st.caption(
@@ -896,7 +1070,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         col_a, col_b = st.columns([1.1, 1.4])
         with col_a:
             color = "speed" if map_color == "delta" else map_color
-            st.plotly_chart(
+            single_map_event = st.plotly_chart(
                 plots.track_map(
                     focus_df,
                     color=color,
@@ -907,6 +1081,14 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 ),
                 use_container_width=True,
                 key="chart_single_track_map",
+                on_select="rerun",
+                selection_mode="points",
+            )
+            apply_map_cursor_pick(single_map_event)
+            render_cursor_telemetry(
+                focus_df,
+                cursor,
+                corner_name=corner_here.name if corner_here else None,
             )
             st.plotly_chart(plots.gg_diagram(focus_df), use_container_width=True, key="chart_single_gg")
         with col_b:
@@ -917,11 +1099,8 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 on_select="rerun",
                 selection_mode="points",
             )
-            picked = distance_from_plotly_event(event)
-            if picked is not None and abs(picked - float(st.session_state.get("cursor_distance", 0.0))) > 0.75:
-                st.session_state["cursor_distance"] = float(picked)
-                st.rerun()
-            st.caption("Hover shows distance + corner name. Click a point to pin the red marker on the map.")
+            apply_map_cursor_pick(event)
+            st.caption("Hover the map for channels · click map or graph to pin the cursor.")
 
     with tab_tyres:
         t1, t2 = st.columns([1.5, 1])
@@ -1296,10 +1475,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 def render_garage() -> None:
     """Browse Quali/Race defaults for every catalog track — no session import required."""
     st.subheader("Garage")
-    st.caption(
-        "Default F1 26 setups for every calendar track. Dial these in before practice — "
-        "no imported session needed. Open a session Setup tab later to engineer from telemetry."
-    )
+    st.caption("Quali and race baselines for every calendar track. No session required.")
 
     tracks = list_tracks_with_setups()
     if not tracks:
@@ -1372,8 +1548,10 @@ def main() -> None:
     ensure_progress_schema(APP_ROOT)
     ensure_session_meta_schema(APP_ROOT)
 
-    st.title("🏎️ F1 26 Telemetry Analyzer")
-    st.caption("Session library · Garage · track dossier · corner losses · map cursor")
+    st.markdown(
+        '<p class="brand-mark">TELEMETRIA</p><p class="brand-sub">F1 26 · local telemetry desk</p>',
+        unsafe_allow_html=True,
+    )
 
     if "progress_backfilled" not in st.session_state:
         with st.spinner("Indexing progress from existing sessions…"):
@@ -1397,7 +1575,7 @@ def main() -> None:
         st.session_state["sidebar_mode"] = st.session_state.pop("nav_mode")
 
     with st.sidebar:
-        st.header("Library")
+        st.header("Navigate")
         mode = st.radio(
             "Mode",
             modes,
