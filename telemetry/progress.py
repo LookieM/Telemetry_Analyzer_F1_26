@@ -184,21 +184,36 @@ def get_track_goal(track: str, app_root: Path | None = None) -> dict[str, Any] |
     return dict(row) if row else None
 
 
-def track_dossier(track: str, app_root: Path | None = None) -> dict[str, Any]:
+def track_dossier(
+    track: str,
+    app_root: Path | None = None,
+    session_type: str | None = None,
+) -> dict[str, Any]:
     """Aggregate progress view for one circuit."""
     ensure_progress_schema(app_root)
+    from .db import ensure_session_meta_schema
+
+    ensure_session_meta_schema(app_root)
     track = normalize_track_name(track) or track
+
+    clauses = ["track = ?"]
+    params: list[Any] = [track]
+    if session_type:
+        clauses.append("session_type = ?")
+        params.append(session_type)
+    where = " AND ".join(clauses)
 
     with connect(app_root) as conn:
         sessions = conn.execute(
-            """
+            f"""
             SELECT id, created_at, source_name, car, lap_count, best_lap, best_lap_time,
-                   notes, stored_size_bytes, original_size_bytes
+                   notes, stored_size_bytes, original_size_bytes,
+                   session_type, conditions, setup_fingerprint, setup_json
             FROM sessions
-            WHERE track = ?
+            WHERE {where}
             ORDER BY created_at DESC
             """,
-            (track,),
+            params,
         ).fetchall()
         pb_rows = conn.execute(
             """
@@ -277,6 +292,14 @@ def track_dossier(track: str, app_root: Path | None = None) -> dict[str, Any]:
             except Exception:
                 corner_trend = pd.DataFrame()
 
+    from .setup_history import setup_timeline
+
+    timeline = setup_timeline(track, app_root, session_type=session_type)
+
+    pb_session_id = None
+    if not history.empty:
+        pb_session_id = int(history.sort_values("lap_time").iloc[0]["session_id"])
+
     return {
         "track": track,
         "sessions": session_df,
@@ -287,6 +310,9 @@ def track_dossier(track: str, app_root: Path | None = None) -> dict[str, Any]:
         "latest_corners": corners,
         "corner_trend": corner_trend,
         "session_count": int(len(session_df)),
+        "setup_timeline": timeline,
+        "pb_session_id": pb_session_id,
+        "session_type_filter": session_type,
     }
 
 
