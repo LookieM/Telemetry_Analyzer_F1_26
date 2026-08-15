@@ -1,0 +1,6 @@
+data/
+*.csv
+*.tsv
+__pycache__/
+.venv/
+_upload_cache.csv

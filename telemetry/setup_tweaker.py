@@ -1,0 +1,489 @@
+"""
+Setup tweaker with heuristic lap-time estimates.
+
+Parameter limits match the F1 26 in-game garage (verified from setup UI):
+Fuel, Aero, Transmission, Geometry, Suspension, Brakes, Tyres.
+
+SRT stores tyre pressures in Pascals; the UI shows psi.
+Setup wheel indices in SRT: 0/1 = front, 2/3 = rear (pressures / ride height).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
+import pandas as pd
+
+# F1 26 / SRT: pressures stored as Pa; garage UI uses psi
+PA_PER_PSI = 6894.757
+PSI_SCALE = 1.0 / PA_PER_PSI
+
+
+def psi_to_pa(psi: float) -> float:
+    return float(psi) * PA_PER_PSI
+
+
+def pa_to_psi(pa: float) -> float:
+    return float(pa) * PSI_SCALE
+
+
+@dataclass
+class SetupParam:
+    key: str
+    label: str
+    group: str
+    unit: str
+    min_v: float
+    max_v: float
+    step: float
+    # Seconds of lap time per +1 unit (negative = faster when increased)
+    dt_per_unit: float
+    notes: str = ""
+    display_scale: float = 1.0  # multiply stored value for UI (Pa -> psi, frac -> %)
+
+
+# Exact F1 26 garage ranges from in-game setup screens.
+SETUP_PARAMS: list[SetupParam] = [
+    # --- Fuel ---
+    SetupParam(
+        "fuel_setup",
+        "Fuel load",
+        "Fuel",
+        "kg",
+        5,
+        110,
+        1,
+        0.030,
+        "Garage range 5–110 kg. Full tank costs ~3 s/lap vs minimum.",
+    ),
+    # --- Aerodynamics ---
+    SetupParam("wing_setup_0", "Front wing", "Aero", "", 0, 50, 1, -0.012, "More FW → better front grip, more drag. Range 0–50."),
+    SetupParam("wing_setup_1", "Rear wing", "Aero", "", 0, 50, 1, -0.008, "More RW → traction/stability, more drag. Range 0–50."),
+    # --- Transmission ---
+    SetupParam(
+        "diff_onThrottle_setup",
+        "Diff on-throttle",
+        "Transmission",
+        "%",
+        0.10,
+        1.0,
+        0.01,
+        0.010,
+        "Unlocked 10% → Locked 100%. Higher → more exit stability / understeer.",
+        display_scale=100.0,
+    ),
+    SetupParam(
+        "diff_offThrottle_setup",
+        "Diff off-throttle",
+        "Transmission",
+        "%",
+        0.10,
+        1.0,
+        0.01,
+        0.008,
+        "Unlocked 10% → Locked 100%. Higher → more entry stability, less rotation.",
+        display_scale=100.0,
+    ),
+    # --- Suspension geometry ---
+    SetupParam(
+        "camber_setup_0",
+        "Front camber",
+        "Geometry",
+        "°",
+        -3.50,
+        -2.50,
+        0.01,
+        0.05,
+        "More negative → better mid-corner grip, more inner-shoulder wear. Range −3.50 to −2.50°.",
+    ),
+    SetupParam(
+        "camber_setup_1",
+        "Rear camber",
+        "Geometry",
+        "°",
+        -2.00,
+        -1.00,
+        0.01,
+        0.04,
+        "More negative → rear grip; too much → traction loss. Range −2.00 to −1.00°.",
+    ),
+    SetupParam(
+        "toe_setup_0",
+        "Front toe",
+        "Geometry",
+        "°",
+        0.00,
+        0.20,
+        0.01,
+        0.08,
+        "Toe-out helps turn-in; costs straight-line feel. Range 0.00–0.20°.",
+    ),
+    SetupParam(
+        "toe_setup_1",
+        "Rear toe",
+        "Geometry",
+        "°",
+        0.10,
+        0.25,
+        0.01,
+        0.06,
+        "More toe-in → stability; less → rotation. Range 0.10–0.25°.",
+    ),
+    # --- Suspension ---
+    SetupParam(
+        "susp_spring_setup_0",
+        "Front suspension",
+        "Suspension",
+        "",
+        1,
+        41,
+        1,
+        0.003,
+        "Soft 1 → Hard 41. Stiffer → aero platform, harsher over bumps.",
+    ),
+    SetupParam(
+        "susp_spring_setup_1",
+        "Rear suspension",
+        "Suspension",
+        "",
+        1,
+        41,
+        1,
+        0.003,
+        "Soft 1 → Hard 41. Softer rear often helps traction.",
+    ),
+    SetupParam(
+        "arb_setup_0",
+        "Front anti-roll bar",
+        "Suspension",
+        "",
+        1,
+        21,
+        1,
+        0.004,
+        "Soft 1 → Hard 21. Stiffer front → sharper in, less mid-corner rotation.",
+    ),
+    SetupParam(
+        "arb_setup_1",
+        "Rear anti-roll bar",
+        "Suspension",
+        "",
+        1,
+        21,
+        1,
+        0.003,
+        "Soft 1 → Hard 21. Stiffer rear → more rotation, less rear grip.",
+    ),
+    # SRT may export L/R; garage UI is one front / one rear value (keep sides equal).
+    SetupParam("susp_height_setup_0", "Front ride height L", "Suspension", "", 15, 35, 1, 0.006, "Front ride height. Garage range 15–35."),
+    SetupParam("susp_height_setup_1", "Front ride height R", "Suspension", "", 15, 35, 1, 0.006, "Front ride height. Garage range 15–35."),
+    SetupParam("susp_height_setup_2", "Rear ride height L", "Suspension", "", 40, 60, 1, 0.005, "Rear ride height. Garage range 40–60."),
+    SetupParam("susp_height_setup_3", "Rear ride height R", "Suspension", "", 40, 60, 1, 0.005, "Rear ride height. Garage range 40–60."),
+    # --- Brakes ---
+    SetupParam(
+        "brake_bias_setup",
+        "Brake bias",
+        "Brakes",
+        "% front",
+        0.50,
+        0.70,
+        0.01,
+        0.020,
+        "50% rear ↔ 70% front. Forward → lock risk; rearward → entry rotation.",
+        display_scale=100.0,
+    ),
+    SetupParam(
+        "front_brake_bias",
+        "Brake bias (live)",
+        "Brakes",
+        "% front",
+        0.50,
+        0.70,
+        0.01,
+        0.020,
+        "Live mirror of front brake bias if present in telemetry.",
+        display_scale=100.0,
+    ),
+    SetupParam(
+        "brake_press_setup",
+        "Brake pressure",
+        "Brakes",
+        "%",
+        0.80,
+        1.0,
+        0.01,
+        -0.015,
+        "Min 80% – Max 100%. Higher → stronger initial bite.",
+        display_scale=100.0,
+    ),
+    # --- Tyres (psi in garage; Pa in SRT) ---
+    SetupParam(
+        "tyre_press_setup_0",
+        "Front left pressure",
+        "Tyres",
+        "psi",
+        psi_to_pa(22.5),
+        psi_to_pa(29.5),
+        psi_to_pa(0.05),
+        0.0,
+        "Front tyre pressure. Range 22.5–29.5 psi.",
+        display_scale=PSI_SCALE,
+    ),
+    SetupParam(
+        "tyre_press_setup_1",
+        "Front right pressure",
+        "Tyres",
+        "psi",
+        psi_to_pa(22.5),
+        psi_to_pa(29.5),
+        psi_to_pa(0.05),
+        0.0,
+        "Front tyre pressure. Range 22.5–29.5 psi.",
+        display_scale=PSI_SCALE,
+    ),
+    SetupParam(
+        "tyre_press_setup_2",
+        "Rear left pressure",
+        "Tyres",
+        "psi",
+        psi_to_pa(20.5),
+        psi_to_pa(26.5),
+        psi_to_pa(0.05),
+        0.0,
+        "Rear tyre pressure. Range 20.5–26.5 psi.",
+        display_scale=PSI_SCALE,
+    ),
+    SetupParam(
+        "tyre_press_setup_3",
+        "Rear right pressure",
+        "Tyres",
+        "psi",
+        psi_to_pa(20.5),
+        psi_to_pa(26.5),
+        psi_to_pa(0.05),
+        0.0,
+        "Rear tyre pressure. Range 20.5–26.5 psi.",
+        display_scale=PSI_SCALE,
+    ),
+]
+
+
+@dataclass
+class SetupDeltaLine:
+    key: str
+    label: str
+    baseline: float
+    proposed: float
+    delta_units: float
+    est_dt: float
+    note: str
+
+
+@dataclass
+class SetupEstimate:
+    baseline: dict[str, float]
+    proposed: dict[str, float]
+    lines: list[SetupDeltaLine]
+    total_dt: float
+    aero_balance_note: str
+    confidence: str
+    breakdown: dict[str, float] = field(default_factory=dict)
+
+
+def _param_map() -> dict[str, SetupParam]:
+    return {p.key: p for p in SETUP_PARAMS}
+
+
+def normalize_setup(raw: dict[str, Any]) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for p in SETUP_PARAMS:
+        if p.key in raw and raw[p.key] is not None:
+            try:
+                out[p.key] = float(np.clip(float(raw[p.key]), p.min_v, p.max_v))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def display_value(param: SetupParam, value: float) -> float:
+    return float(value) * param.display_scale
+
+
+def storage_value(param: SetupParam, display: float) -> float:
+    return float(display) / param.display_scale if param.display_scale else float(display)
+
+
+def estimate_setup_delta(
+    baseline: dict[str, Any],
+    proposed: dict[str, Any],
+    *,
+    track: str | None = None,
+    reference_lap_time: float | None = None,
+) -> SetupEstimate:
+    """
+    Estimate lap-time change proposed - baseline.
+    Negative total_dt => proposed setup expected faster.
+    """
+    base = normalize_setup(baseline)
+    prop = normalize_setup(proposed)
+    pmap = _param_map()
+    lines: list[SetupDeltaLine] = []
+    breakdown = {
+        "aero": 0.0,
+        "transmission": 0.0,
+        "geometry": 0.0,
+        "suspension": 0.0,
+        "brakes": 0.0,
+        "tyres": 0.0,
+        "fuel": 0.0,
+    }
+
+    t = (track or "").lower()
+    high_downforce = any(x in t for x in ("monaco", "hungar", "singapore", "zandvoort"))
+    power_track = any(x in t for x in ("monza", "baku", "jeddah", "las vegas", "spa"))
+    aero_mult = 1.25 if high_downforce else (0.75 if power_track else 1.0)
+    drag_mult = 1.35 if power_track else (0.8 if high_downforce else 1.0)
+
+    for key, b in base.items():
+        if key not in prop or key not in pmap:
+            continue
+        p = pmap[key]
+        v = float(prop[key])
+        du = v - b
+        if abs(du) < 1e-9:
+            continue
+
+        if key == "wing_setup_0":
+            est = du * (-0.014 * aero_mult + 0.006 * drag_mult)
+            group = "aero"
+        elif key == "wing_setup_1":
+            est = du * (-0.010 * aero_mult + 0.011 * drag_mult)
+            group = "aero"
+        elif key.startswith("tyre_press"):
+            disp_b = display_value(p, b)
+            disp_v = display_value(p, v)
+            opt = 25.0 if key.endswith(("_0", "_1")) else 22.0
+            pen_b = 0.004 * (disp_b - opt) ** 2
+            pen_v = 0.004 * (disp_v - opt) ** 2
+            est = pen_v - pen_b
+            group = "tyres"
+        elif key == "fuel_setup":
+            est = du * 0.030
+            group = "fuel"
+        elif p.group == "Brakes":
+            opt = 0.56
+            if "press" in key:
+                est = du * p.dt_per_unit
+            else:
+                est = (abs(v - opt) - abs(b - opt)) * 0.35 + du * 0.01
+            group = "brakes"
+        elif p.group == "Geometry":
+            # Mild penalty away from aggressive (more negative) camber / small toe
+            est = du * p.dt_per_unit * 0.15
+            group = "geometry"
+        else:
+            est = du * p.dt_per_unit
+            group = {
+                "Aero": "aero",
+                "Transmission": "transmission",
+                "Suspension": "suspension",
+                "Fuel": "fuel",
+            }.get(p.group, p.group.lower())
+
+        lines.append(
+            SetupDeltaLine(
+                key=key,
+                label=p.label,
+                baseline=b,
+                proposed=v,
+                delta_units=du,
+                est_dt=float(est),
+                note=p.notes,
+            )
+        )
+        breakdown[group] = breakdown.get(group, 0.0) + float(est)
+
+    total = float(sum(l.est_dt for l in lines))
+
+    fw_du = prop.get("wing_setup_0", base.get("wing_setup_0", 0)) - base.get("wing_setup_0", prop.get("wing_setup_0", 0))
+    rw_du = prop.get("wing_setup_1", base.get("wing_setup_1", 0)) - base.get("wing_setup_1", prop.get("wing_setup_1", 0))
+    if abs(fw_du) < 0.1 and abs(rw_du) < 0.1:
+        balance = "Aero balance unchanged."
+    elif fw_du - rw_du > 1:
+        balance = "More front-biased aero → expect more oversteer / sharper turn-in."
+    elif rw_du - fw_du > 1:
+        balance = "More rear-biased aero → expect more understeer / traction stability."
+    else:
+        balance = "Overall downforce level changed with similar balance."
+
+    n = len(lines)
+    if n == 0:
+        conf = "No changes."
+    elif n <= 3 and abs(total) < 0.25:
+        conf = "Low–medium confidence (small tweak)."
+    elif "fuel" in breakdown and abs(breakdown["fuel"]) > abs(total) * 0.6:
+        conf = "Higher confidence on fuel mass; aero/mech are directional."
+    else:
+        conf = "Directional estimate — validate with a practice push after one change at a time."
+
+    if reference_lap_time:
+        total = float(np.clip(total, -0.08 * reference_lap_time, 0.08 * reference_lap_time))
+
+    return SetupEstimate(
+        baseline=base,
+        proposed={**base, **prop},
+        lines=sorted(lines, key=lambda x: abs(x.est_dt), reverse=True),
+        total_dt=total,
+        aero_balance_note=balance,
+        confidence=conf,
+        breakdown=breakdown,
+    )
+
+
+def setup_presets(baseline: dict[str, Any]) -> dict[str, dict[str, float]]:
+    """Handy one-click directions from the current garage."""
+    b = normalize_setup(baseline)
+    presets = {}
+    if "wing_setup_0" in b and "wing_setup_1" in b:
+        presets["More downforce"] = {
+            **b,
+            "wing_setup_0": min(50, b["wing_setup_0"] + 2),
+            "wing_setup_1": min(50, b["wing_setup_1"] + 2),
+        }
+        presets["Less drag"] = {
+            **b,
+            "wing_setup_0": max(0, b["wing_setup_0"] - 2),
+            "wing_setup_1": max(0, b["wing_setup_1"] - 3),
+        }
+    if "brake_bias_setup" in b:
+        presets["Rearward bias"] = {**b, "brake_bias_setup": max(0.50, b["brake_bias_setup"] - 0.02)}
+        presets["Forward bias"] = {**b, "brake_bias_setup": min(0.70, b["brake_bias_setup"] + 0.02)}
+    if "fuel_setup" in b:
+        presets["Quali fuel (min)"] = {**b, "fuel_setup": 5.0}
+        presets["Race fuel (+10)"] = {**b, "fuel_setup": min(110, b["fuel_setup"] + 10)}
+    if "diff_onThrottle_setup" in b:
+        presets["More exit rotation"] = {
+            **b,
+            "diff_onThrottle_setup": max(0.10, b["diff_onThrottle_setup"] - 0.10),
+        }
+    return presets
+
+
+def estimate_to_frame(est: SetupEstimate) -> pd.DataFrame:
+    if not est.lines:
+        return pd.DataFrame()
+    return pd.DataFrame(
+        [
+            {
+                "Parameter": ln.label,
+                "Baseline": ln.baseline,
+                "Proposed": ln.proposed,
+                "Δ units": ln.delta_units,
+                "Est. Δt (s)": ln.est_dt,
+                "Note": ln.note,
+            }
+            for ln in est.lines
+        ]
+    )
