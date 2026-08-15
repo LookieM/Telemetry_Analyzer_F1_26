@@ -479,3 +479,392 @@ def recommended_deploy_map(
         ),
     )
     return grouped.sort_values("priority")
+
+
+# ---------------------------------------------------------------------------
+# 2026 channels: active aero, overtake, ICE / MGUK power split
+# ---------------------------------------------------------------------------
+
+ACTIVE_AERO_LABELS: dict[int, str] = {
+    0: "High downforce",
+    1: "Low drag",
+}
+
+
+def enrich_2026_channels(lap_df: pd.DataFrame) -> pd.DataFrame:
+    """Flags and normalised power columns for 2026 SRT channels."""
+    out = lap_df.sort_values("lap_distance").copy() if "lap_distance" in lap_df.columns else lap_df.copy()
+
+    if "activeAero_mode" in out.columns:
+        mode = out["activeAero_mode"].fillna(0).astype(int)
+        out["activeAero_mode"] = mode
+        out["aero_low_drag"] = mode >= 1
+        out["aero_mode_label"] = mode.map(lambda m: ACTIVE_AERO_LABELS.get(m, f"Mode {m}"))
+    else:
+        out["aero_low_drag"] = False
+
+    if "overtake_allowed" in out.columns:
+        out["ot_allowed"] = out["overtake_allowed"].fillna(0).astype(float) > 0.5
+    else:
+        out["ot_allowed"] = False
+
+    if "overtake" in out.columns:
+        # SRT dumps may hold the button as 0/1; treat >0.5 as pressed.
+        out["ot_active"] = out["overtake"].fillna(0).astype(float) > 0.5
+    else:
+        out["ot_active"] = False
+
+    out["ot_available_unused"] = out["ot_allowed"] & (~out["ot_active"])
+
+    for src, dst in (("ice_power", "ice_kw"), ("mguk_power", "mguk_kw")):
+        if src in out.columns:
+            raw = out[src].astype(float)
+            # Game values are typically Watts; fall back if already kW-scale.
+            out[dst] = np.where(raw.abs().median() > 2000, raw / 1000.0, raw)
+        elif dst not in out.columns:
+            out[dst] = np.nan
+
+    if "ice_kw" in out.columns and "mguk_kw" in out.columns:
+        ice = out["ice_kw"].fillna(0.0)
+        mguk = out["mguk_kw"].fillna(0.0)
+        total = ice + mguk
+        out["power_total_kw"] = total
+        out["mguk_share"] = np.where(total > 1.0, mguk / total, np.nan)
+
+    if "ers_store_mj" not in out.columns and "ers_store" in out.columns:
+        store = out["ers_store"].astype(float)
+        out["ers_store_mj"] = np.where(store > 1000, store / 1e6, store)
+
+    return out
+
+
+def lap_2026_summary(lap_df: pd.DataFrame) -> dict:
+    """Scalar KPIs for active aero / overtake / ICE–MGUK on one lap."""
+    lap = enrich_2026_channels(lap_df)
+    if lap.empty:
+        return {}
+
+    out: dict = {}
+    n = max(len(lap), 1)
+
+    if "activeAero_mode" in lap.columns:
+        low = float(lap["aero_low_drag"].mean() * 100)
+        out["aero_low_drag_pct"] = low
+        out["aero_high_df_pct"] = 100.0 - low
+        if "speed" in lap.columns:
+            out["aero_low_drag_speed"] = float(lap.loc[lap["aero_low_drag"], "speed"].mean()) if lap["aero_low_drag"].any() else np.nan
+            out["aero_high_df_speed"] = float(lap.loc[~lap["aero_low_drag"], "speed"].mean()) if (~lap["aero_low_drag"]).any() else np.nan
+
+    if "overtake" in lap.columns or "overtake_allowed" in lap.columns:
+        allowed_pct = float(lap["ot_allowed"].mean() * 100)
+        used_pct = float(lap["ot_active"].mean() * 100)
+        out["overtake_allowed_pct"] = allowed_pct
+        out["overtake_used_pct"] = used_pct
+        out["overtake_unused_pct"] = float(lap["ot_available_unused"].mean() * 100)
+        # Duty when available: used / allowed samples
+        if lap["ot_allowed"].any():
+            out["overtake_duty_when_allowed"] = float(lap.loc[lap["ot_allowed"], "ot_active"].mean() * 100)
+        else:
+            out["overtake_duty_when_allowed"] = np.nan
+
+        # SOC impact: store change while overtake is active vs rest of lap
+        if "ers_store_mj" in lap.columns and lap["ot_active"].any() and (~lap["ot_active"]).any():
+            store = lap["ers_store_mj"].astype(float)
+            dstore = store.diff().fillna(0.0)
+            active = dstore[lap["ot_active"]]
+            idle = dstore[~lap["ot_active"]]
+            out["overtake_soc_rate_mj"] = float(active.mean())
+            out["overtake_soc_delta_mj"] = float(active.sum())
+            out["baseline_soc_rate_mj"] = float(idle.mean())
+            out["overtake_soc_extra_mj"] = float(active.sum() - idle.mean() * len(active))
+
+    if "ice_kw" in lap.columns and lap["ice_kw"].notna().any():
+        out["ice_avg_kw"] = float(lap["ice_kw"].mean())
+        out["ice_peak_kw"] = float(lap["ice_kw"].max())
+    if "mguk_kw" in lap.columns and lap["mguk_kw"].notna().any():
+        out["mguk_avg_kw"] = float(lap["mguk_kw"].mean())
+        out["mguk_peak_kw"] = float(lap["mguk_kw"].max())
+        out["mguk_share_pct"] = float(lap["mguk_share"].mean() * 100) if "mguk_share" in lap.columns else np.nan
+        if "throttle" in lap.columns:
+            wot = lap["throttle"] > 0.95
+            if wot.any():
+                out["wot_mguk_share_pct"] = float(lap.loc[wot, "mguk_share"].mean() * 100)
+                out["wot_mguk_avg_kw"] = float(lap.loc[wot, "mguk_kw"].mean())
+                out["wot_ice_avg_kw"] = float(lap.loc[wot, "ice_kw"].mean()) if "ice_kw" in lap.columns else np.nan
+
+    out["samples"] = int(n)
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def active_aero_by_distance(lap_df: pd.DataFrame, n_bins: int = 24) -> pd.DataFrame:
+    """Low-drag aero share along the lap."""
+    lap = enrich_2026_channels(lap_df)
+    if lap.empty or "lap_distance" not in lap.columns or "activeAero_mode" not in lap.columns:
+        return pd.DataFrame()
+
+    length = float(lap["lap_distance"].max())
+    edges = np.linspace(0, length, n_bins + 1)
+    rows = []
+    for i in range(n_bins):
+        mask = (lap["lap_distance"] >= edges[i]) & (
+            lap["lap_distance"] <= edges[i + 1] if i == n_bins - 1 else lap["lap_distance"] < edges[i + 1]
+        )
+        chunk = lap.loc[mask]
+        if chunk.empty:
+            continue
+        rows.append(
+            {
+                "bin": i + 1,
+                "dist_start": float(edges[i]),
+                "dist_end": float(edges[i + 1]),
+                "dist_mid": float((edges[i] + edges[i + 1]) / 2),
+                "low_drag_pct": float(chunk["aero_low_drag"].mean() * 100),
+                "speed_avg": float(chunk["speed"].mean()) if "speed" in chunk else np.nan,
+                "throttle_avg": float(chunk["throttle"].mean()) if "throttle" in chunk else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def compare_active_aero(focus: pd.DataFrame, reference: pd.DataFrame) -> pd.DataFrame:
+    """Align aero distance bins; positive delta => focus spent more time in low-drag."""
+    if focus.empty or reference.empty:
+        return pd.DataFrame()
+    merged = focus.merge(
+        reference[["bin", "low_drag_pct"]].rename(columns={"low_drag_pct": "ref_low_drag_pct"}),
+        on="bin",
+        how="left",
+    )
+    merged["low_drag_delta"] = merged["low_drag_pct"] - merged["ref_low_drag_pct"]
+    return merged
+
+
+def power_split_by_distance(lap_df: pd.DataFrame, n_bins: int = 24) -> pd.DataFrame:
+    """ICE vs MGUK average power along the lap."""
+    lap = enrich_2026_channels(lap_df)
+    if lap.empty or "lap_distance" not in lap.columns:
+        return pd.DataFrame()
+    if "ice_kw" not in lap.columns and "mguk_kw" not in lap.columns:
+        return pd.DataFrame()
+    if lap[["ice_kw", "mguk_kw"]].isna().all().all():
+        return pd.DataFrame()
+
+    length = float(lap["lap_distance"].max())
+    edges = np.linspace(0, length, n_bins + 1)
+    rows = []
+    for i in range(n_bins):
+        mask = (lap["lap_distance"] >= edges[i]) & (
+            lap["lap_distance"] <= edges[i + 1] if i == n_bins - 1 else lap["lap_distance"] < edges[i + 1]
+        )
+        chunk = lap.loc[mask]
+        if chunk.empty:
+            continue
+        ice = float(chunk["ice_kw"].mean()) if "ice_kw" in chunk else np.nan
+        mguk = float(chunk["mguk_kw"].mean()) if "mguk_kw" in chunk else np.nan
+        total = (0.0 if np.isnan(ice) else ice) + (0.0 if np.isnan(mguk) else mguk)
+        rows.append(
+            {
+                "bin": i + 1,
+                "dist_start": float(edges[i]),
+                "dist_end": float(edges[i + 1]),
+                "dist_mid": float((edges[i] + edges[i + 1]) / 2),
+                "ice_kw": ice,
+                "mguk_kw": mguk,
+                "total_kw": total,
+                "mguk_share_pct": float(mguk / total * 100) if total > 1.0 else np.nan,
+                "speed_avg": float(chunk["speed"].mean()) if "speed" in chunk else np.nan,
+                "throttle_avg": float(chunk["throttle"].mean()) if "throttle" in chunk else np.nan,
+                "overtake_pct": float(chunk["ot_active"].mean() * 100) if "ot_active" in chunk else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def overtake_timeline(lap_df: pd.DataFrame) -> pd.DataFrame:
+    """Distance-indexed overtake / allowed / SOC for plotting."""
+    lap = enrich_2026_channels(lap_df)
+    if lap.empty:
+        return pd.DataFrame()
+    cols = [c for c in ("lap_distance", "ot_allowed", "ot_active", "ers_store_mj", "speed", "throttle") if c in lap.columns]
+    if "lap_distance" not in cols:
+        return pd.DataFrame()
+    out = lap[cols].copy()
+    if "ot_allowed" in out.columns:
+        out["ot_allowed"] = out["ot_allowed"].astype(float)
+    if "ot_active" in out.columns:
+        out["ot_active"] = out["ot_active"].astype(float)
+    return out
+
+
+def session_2026_table(df: pd.DataFrame) -> pd.DataFrame:
+    """One row per valid lap with 2026 channel KPIs."""
+    summary = build_lap_summary(df)
+    if summary.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in summary.iterrows():
+        lap = get_lap(df, int(row["lap"]))
+        kpis = lap_2026_summary(lap)
+        if not kpis:
+            continue
+        rows.append(
+            {
+                "lap": int(row["lap"]),
+                "lap_time": float(row["lap_time"]),
+                "delta_best": float(row.get("delta_best") or 0),
+                "is_best": bool(row.get("is_best")),
+                **kpis,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def channels_2026_insights(
+    df: pd.DataFrame,
+    focus_lap: int,
+    reference_lap: int | None = None,
+) -> list[ErsTip]:
+    """Coach callouts for active aero, overtake, and ICE/MGUK split."""
+    tips: list[ErsTip] = []
+    table = session_2026_table(df)
+    focus_df = enrich_2026_channels(get_lap(df, focus_lap))
+    focus_k = lap_2026_summary(focus_df)
+
+    if not focus_k:
+        return [ErsTip("warning", "No 2026 channels", "This lap has no activeAero / overtake / ICE–MGUK columns.")]
+
+    ref_lap = reference_lap
+    if ref_lap is None and not table.empty and table["is_best"].any():
+        ref_lap = int(table.loc[table["is_best"], "lap"].iloc[0])
+    ref_k = lap_2026_summary(get_lap(df, int(ref_lap))) if ref_lap is not None else {}
+
+    if "aero_low_drag_pct" in focus_k:
+        tips.append(
+            ErsTip(
+                "info",
+                "Active aero window",
+                f"Lap {focus_lap}: low-drag {focus_k['aero_low_drag_pct']:.0f}% of the lap"
+                + (
+                    f" (avg {focus_k['aero_low_drag_speed']:.0f} km/h) vs high-DF "
+                    f"{focus_k.get('aero_high_df_speed', float('nan')):.0f} km/h."
+                    if pd.notna(focus_k.get("aero_low_drag_speed"))
+                    else "."
+                ),
+            )
+        )
+        if ref_k and "aero_low_drag_pct" in ref_k and ref_lap != focus_lap:
+            delta = focus_k["aero_low_drag_pct"] - ref_k["aero_low_drag_pct"]
+            if abs(delta) >= 5:
+                tips.append(
+                    ErsTip(
+                        "tip" if delta < 0 else "info",
+                        "Aero vs reference",
+                        f"{'Less' if delta < 0 else 'More'} low-drag than lap {ref_lap} "
+                        f"({delta:+.0f} pts). Check straights: leave low-drag open on long DRS zones; "
+                        "switch early into braking if you are unstable on entry.",
+                    )
+                )
+
+        focus_prof = active_aero_by_distance(focus_df, n_bins=12)
+        if not focus_prof.empty and focus_prof["low_drag_pct"].max() < 20:
+            tips.append(
+                ErsTip(
+                    "tip",
+                    "Little low-drag aero",
+                    "Low-drag mode rarely engaged. On 2026 cars that costs top speed — "
+                    "confirm the active-aero toggle on the longest straights.",
+                )
+            )
+
+    if "overtake_allowed_pct" in focus_k or "overtake_used_pct" in focus_k:
+        allowed = focus_k.get("overtake_allowed_pct", 0.0)
+        used = focus_k.get("overtake_used_pct", 0.0)
+        duty = focus_k.get("overtake_duty_when_allowed", np.nan)
+        # Constant flags (always 0 or always 1) → low-signal dump; still report once.
+        const_signal = (allowed in (0.0, 100.0)) and (used in (0.0, 100.0)) and abs(allowed - used) < 1e-6
+        if const_signal:
+            tips.append(
+                ErsTip(
+                    "info",
+                    "Overtake channel flat",
+                    f"Overtake / allowed stayed at {'ON' if used > 50 else 'OFF'} for the whole lap "
+                    f"({used:.0f}% samples). Export may not toggle mid-lap in this session — "
+                    "SOC / deploy mode remain the better energy signals.",
+                )
+            )
+        else:
+            tips.append(
+                ErsTip(
+                    "info",
+                    "Overtake availability",
+                    f"Allowed {allowed:.0f}% of the lap, used {used:.0f}%"
+                    + (f" (duty when available {duty:.0f}%)." if pd.notna(duty) else "."),
+                )
+            )
+            unused = focus_k.get("overtake_unused_pct", 0.0)
+            if unused > 8 and allowed > 10:
+                tips.append(
+                    ErsTip(
+                        "tip",
+                        "Overtake left on the table",
+                        f"~{unused:.0f}% of samples were allowed but not pressed. "
+                        "Use the button on exit / DRS detection when SOC supports it.",
+                    )
+                )
+            if pd.notna(focus_k.get("overtake_soc_delta_mj")) and abs(focus_k["overtake_soc_delta_mj"]) > 0.05:
+                delta = focus_k["overtake_soc_delta_mj"]
+                tips.append(
+                    ErsTip(
+                        "info",
+                        "Overtake SOC impact",
+                        f"While overtake was active, store changed by {delta:+.2f} MJ "
+                        f"(~{focus_k.get('overtake_soc_rate_mj', 0):+.4f} MJ/sample). "
+                        + (
+                            "Expect a steeper dump — plan harvest before the next attack."
+                            if delta < 0
+                            else "Net store rose during overtake windows (check harvest overlap)."
+                        ),
+                    )
+                )
+
+    if "mguk_share_pct" in focus_k and pd.notna(focus_k["mguk_share_pct"]):
+        tips.append(
+            ErsTip(
+                "info",
+                "ICE / MGUK split",
+                f"Avg ICE {focus_k.get('ice_avg_kw', float('nan')):.0f} kW · "
+                f"MGUK {focus_k.get('mguk_avg_kw', float('nan')):.0f} kW "
+                f"(MGUK share {focus_k['mguk_share_pct']:.0f}% of total)."
+                + (
+                    f" On WOT, MGUK share {focus_k['wot_mguk_share_pct']:.0f}%."
+                    if pd.notna(focus_k.get("wot_mguk_share_pct"))
+                    else ""
+                ),
+            )
+        )
+        if ref_k and pd.notna(ref_k.get("wot_mguk_share_pct")) and pd.notna(focus_k.get("wot_mguk_share_pct")):
+            gap = focus_k["wot_mguk_share_pct"] - ref_k["wot_mguk_share_pct"]
+            if gap < -8:
+                tips.append(
+                    ErsTip(
+                        "tip",
+                        "Weak electric on the straights",
+                        f"WOT MGUK share is {gap:.0f} pts vs lap {ref_lap}. "
+                        "Build SOC earlier or hold a deploy pulse for the longest straight.",
+                    )
+                )
+
+        prof = power_split_by_distance(focus_df, n_bins=12)
+        if not prof.empty and prof["mguk_kw"].notna().any():
+            peak = prof.sort_values("mguk_kw", ascending=False).iloc[0]
+            tips.append(
+                ErsTip(
+                    "info",
+                    "Peak MGUK zone",
+                    f"Strongest electric assist around {peak['dist_start']:.0f}–{peak['dist_end']:.0f} m "
+                    f"(~{peak['mguk_kw']:.0f} kW avg in bin).",
+                )
+            )
+
+    return tips

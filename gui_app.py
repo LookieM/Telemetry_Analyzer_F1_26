@@ -23,7 +23,9 @@ from telemetry.corners import (
     resolve_corners,
 )
 from telemetry.db import (
+    SESSION_TYPES,
     delete_session,
+    ensure_session_meta_schema,
     get_session,
     get_session_laps,
     get_track_outline,
@@ -32,9 +34,10 @@ from telemetry.db import (
     list_sessions,
     list_tracks,
     load_session_telemetry,
-    update_session_notes,
+    update_session_tags,
 )
 from telemetry.ers import (
+    channels_2026_insights,
     ers_by_corner,
     ers_by_distance,
     lap_ers_summary,
@@ -44,7 +47,8 @@ from telemetry.ers import (
 )
 from telemetry.track_catalog import TRACK_LENGTHS_M
 from telemetry.import_session import import_csv
-from telemetry.insights import Insight, generate_insights
+from telemetry.corner_engineer import render_corner_engineer_panel
+from telemetry.insights import Insight, compare_brake_markers, generate_insights
 from telemetry.loader import list_local_csvs
 from telemetry.metrics import (
     align_laps,
@@ -61,19 +65,33 @@ from telemetry.progress import (
     set_track_goal,
     track_dossier,
 )
-from telemetry.setup_builder import build_setup_from_practice, changes_frame
-from telemetry.setup_tweaker import (
-    SETUP_PARAMS,
-    display_value,
-    estimate_setup_delta,
-    estimate_to_frame,
-    normalize_setup,
-    pa_to_psi,
-    setup_presets,
-    storage_value,
+from telemetry.garage_ui import (
+    apply_setup_to_state,
+    render_garage_tweaker,
 )
+from telemetry.race_windows import stint_window_insights
+from telemetry.session_compare import (
+    compare_sessions,
+    pb_reference_session,
+    session_label,
+)
+from telemetry.setup_builder import build_setup_from_practice, changes_frame
+from telemetry.setup_history import backfill_setup_fingerprints, setup_timeline
+from telemetry.setup_tweaker import normalize_setup, pa_to_psi
+from telemetry.ers_2026_ui import render_2026_channels_panel, render_stint_windows_panel
 from telemetry.stint_coach import session_stint_table, stint_saving_insights
 from telemetry.track_setups import get_typical_setup, list_tracks_with_setups
+
+
+def _open_garage_for_track(track: str) -> None:
+    """Button callback: navigate to Garage on the canonical track name."""
+    canon = normalize_track_name(track) or track
+    st.session_state["nav_mode"] = "Garage"
+    st.session_state["garage_track"] = canon
+    st.session_state["garage_track_select"] = canon
+    st.session_state["garage_variant"] = "Quali"
+    st.session_state["garage_nav_pending"] = True
+
 
 st.set_page_config(
     page_title="F1 26 Telemetry Analyzer",
@@ -215,13 +233,28 @@ def sidebar_import() -> None:
         value=True,
         help="Keeps only the compact library copy.",
     )
+    type_opts = ["(untagged)"] + list(SESSION_TYPES)
+    session_type = st.selectbox("Session type", type_opts, index=0, key="import_session_type")
+    conditions = st.text_input(
+        "Conditions",
+        placeholder="Track evolution, fuel load, weather notes…",
+        key="import_conditions",
+    )
     notes = st.text_input("Session notes (optional)", placeholder="Bahrain race — softs…")
 
     if st.button("Import into library", type="primary", disabled=path is None):
         assert path is not None
+        tag = "" if session_type == "(untagged)" else session_type
         with st.spinner("Importing & compressing…"):
             try:
-                result = import_csv(path, app_root=APP_ROOT, delete_source=delete_src, notes=notes)
+                result = import_csv(
+                    path,
+                    app_root=APP_ROOT,
+                    delete_source=delete_src,
+                    notes=notes,
+                    session_type=tag,
+                    conditions=conditions,
+                )
                 st.success(result.message)
                 st.session_state["selected_session_id"] = result.session_id
                 st.cache_data.clear()
@@ -238,14 +271,27 @@ def pick_session() -> dict | None:
 
     tracks = ["All tracks"] + list_tracks(APP_ROOT)
     track_filter = st.selectbox("Filter track", tracks, key="browse_track_filter")
+    type_opts = ["All types"] + list(SESSION_TYPES) + ["(untagged)"]
+    type_filter = st.selectbox("Filter session type", type_opts, key="browse_type_filter")
+
     view = sessions if track_filter == "All tracks" else sessions[sessions["track"] == track_filter]
+    if type_filter == "(untagged)":
+        view = view[view["session_type"].fillna("").astype(str).str.strip() == ""]
+    elif type_filter != "All types":
+        view = view[view["session_type"] == type_filter]
+
+    if view.empty:
+        st.info("No sessions match these filters.")
+        return None
 
     labels = []
     ids = []
     for _, row in view.iterrows():
         best = format_lap_time(float(row["best_lap_time"])) if pd.notna(row["best_lap_time"]) else "—"
+        tag = row.get("session_type") or ""
+        tag_bit = f"{tag} · " if tag else ""
         labels.append(
-            f"#{row['id']} · {row.get('track') or '?'} · {row.get('car') or '?'} · "
+            f"#{row['id']} · {tag_bit}{row.get('track') or '?'} · {row.get('car') or '?'} · "
             f"{int(row['lap_count'])} laps · best {best} · {format_bytes(row.get('stored_size_bytes'))}"
         )
         ids.append(int(row["id"]))
@@ -256,6 +302,99 @@ def pick_session() -> dict | None:
     session_id = ids[choice]
     st.session_state["selected_session_id"] = session_id
     return get_session(session_id, APP_ROOT)
+
+
+def render_cross_session_compare(
+    focus_session_id: int,
+    *,
+    track: str | None = None,
+    key_prefix: str = "xsess",
+) -> None:
+    """Focus session vs reference session overlay (default ref = PB for track)."""
+    focus = get_session(focus_session_id, APP_ROOT)
+    if not focus:
+        st.warning("Focus session missing.")
+        return
+
+    track_name = normalize_track_name(track or focus.get("track")) or focus.get("track")
+    same_track = list_sessions(APP_ROOT, track=track_name) if track_name else list_sessions(APP_ROOT)
+    if same_track.empty or len(same_track) < 2:
+        st.info("Need at least two sessions on this track for a cross-session overlay.")
+        return
+
+    pb = pb_reference_session(track_name, APP_ROOT) if track_name else None
+    ref_ids = [int(r) for r in same_track["id"].tolist() if int(r) != focus_session_id]
+    if not ref_ids:
+        st.info("No other session available as reference.")
+        return
+
+    default_ref = int(pb["id"]) if pb and int(pb["id"]) in ref_ids else ref_ids[0]
+    # Prefer PB even if it's the focus — then pick next-best other session
+    if pb and int(pb["id"]) == focus_session_id:
+        default_ref = ref_ids[0]
+
+    labels = {int(r["id"]): session_label(dict(r)) for _, r in same_track.iterrows()}
+    ref_index = ref_ids.index(default_ref) if default_ref in ref_ids else 0
+    ref_id = st.selectbox(
+        "Reference session",
+        ref_ids,
+        index=ref_index,
+        format_func=lambda i: labels.get(i, f"#{i}")
+        + (" ★ PB" if pb and int(pb["id"]) == i else ""),
+        key=f"{key_prefix}_ref",
+    )
+    if pb and int(pb["id"]) == int(ref_id):
+        st.caption("Reference defaults to your personal-best session for this track.")
+
+    try:
+        result = compare_sessions(focus_session_id, int(ref_id), app_root=APP_ROOT)
+    except Exception as exc:
+        st.error(f"Compare failed: {exc}")
+        return
+
+    gap = result.focus_time - result.ref_time
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Focus", f"#{result.focus_session['id']} L{result.focus_lap}", format_lap_time(result.focus_time))
+    m2.metric(
+        "Reference",
+        f"#{result.ref_session['id']} L{result.ref_lap}" + (" ★" if result.ref_is_pb else ""),
+        format_lap_time(result.ref_time),
+    )
+    m3.metric("Lap Δ", f"{gap:+.3f}s", help="Positive = focus slower than reference")
+    final_d = float(result.aligned["delta_time"].iloc[-1]) if not result.aligned.empty else gap
+    m4.metric("Integrated Δt", f"{final_d:+.3f}s")
+
+    corners = resolve_corners(result.track, result.track_length)
+    if not result.aligned.empty:
+        st.plotly_chart(
+            plots.telemetry_overlay(
+                result.aligned,
+                f"S{result.ref_session['id']} L{result.ref_lap}",
+                f"S{result.focus_session['id']} L{result.focus_lap}",
+                corners=corners,
+            ),
+            use_container_width=True,
+            key=f"{key_prefix}_overlay",
+        )
+    if not result.corner_cmp.empty:
+        st.subheader("Corner times")
+        st.plotly_chart(
+            plots.corner_delta_bars(result.corner_cmp),
+            use_container_width=True,
+            key=f"{key_prefix}_corners",
+        )
+        if "delta_s" in result.corner_cmp.columns:
+            render_corner_engineer_panel(
+                result.corner_cmp,
+                title="Engineer — phases vs reference session",
+                top_n=3,
+            )
+        else:
+            table = result.corner_cmp.copy()
+            for col in ("time_s", "ref_time_s", "delta_s", "vmin", "ref_vmin"):
+                if col in table.columns:
+                    table[col] = table[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+            st.dataframe(table, use_container_width=True, hide_index=True)
 
 
 def render_dossier() -> None:
@@ -315,11 +454,36 @@ def render_dossier() -> None:
             height=280,
         )
 
+    setups = list_tracks_with_setups()
+    canon = normalize_track_name(track)
+    has_setup = bool(canon and canon in setups)
+
     if not in_library:
         st.info(f"Import an SRT session from **{track}** to unlock PB history, consistency, and the race map outline.")
+        if has_setup:
+            st.button(
+                f"Open Garage for {track}",
+                type="primary",
+                key="dossier_open_garage",
+                on_click=_open_garage_for_track,
+                args=(track,),
+            )
         return
 
-    dossier = track_dossier(track, APP_ROOT)
+    # Raced track: still offer Garage jump
+    if has_setup:
+        st.button(
+            f"Open Garage for {track}",
+            key="dossier_open_garage_raced",
+            on_click=_open_garage_for_track,
+            args=(track,),
+        )
+
+    type_opts = ["All types"] + list(SESSION_TYPES)
+    type_filter = st.selectbox("Filter by session type", type_opts, key="dossier_type_filter")
+    type_arg = None if type_filter == "All types" else type_filter
+
+    dossier = track_dossier(track, APP_ROOT, session_type=type_arg)
     goal = dossier.get("goal")
     outline = get_track_outline(track, APP_ROOT)
 
@@ -364,9 +528,85 @@ def render_dossier() -> None:
     st.subheader("Visit history")
     sess = dossier["sessions"].copy()
     if not sess.empty:
-        show = sess[["id", "created_at", "car", "lap_count", "best_lap_time", "source_name", "notes"]].copy()
+        cols = [
+            c
+            for c in [
+                "id",
+                "created_at",
+                "session_type",
+                "conditions",
+                "car",
+                "lap_count",
+                "best_lap_time",
+                "setup_fingerprint",
+                "source_name",
+                "notes",
+            ]
+            if c in sess.columns
+        ]
+        show = sess[cols].copy()
         show["best_lap_time"] = show["best_lap_time"].map(format_lap_time)
         st.dataframe(show, use_container_width=True, hide_index=True)
+
+    st.subheader("Setup evolution")
+    timeline = dossier.get("setup_timeline")
+    if isinstance(timeline, pd.DataFrame) and not timeline.empty:
+        tl = timeline.sort_values("created_at", ascending=False).copy()
+        display = tl[
+            [
+                c
+                for c in [
+                    "session_id",
+                    "created_at",
+                    "session_type",
+                    "best_lap",
+                    "best_lap_time",
+                    "pace_delta_s",
+                    "setup_delta_summary",
+                    "setup_fingerprint",
+                    "conditions",
+                ]
+                if c in tl.columns
+            ]
+        ].copy()
+        if "best_lap_time" in display.columns:
+            display["best_lap_time"] = display["best_lap_time"].map(format_lap_time)
+        if "pace_delta_s" in display.columns:
+            display["pace_delta_s"] = display["pace_delta_s"].map(
+                lambda x: f"{x:+.3f}s" if pd.notna(x) else "—"
+            )
+        st.caption(
+            "Each row is a session best linked to its setup fingerprint. "
+            "Setup Δ is vs the previous visit; pace Δ is best-lap response."
+        )
+        st.dataframe(display, use_container_width=True, hide_index=True)
+        changed = tl[tl["setup_changed"] == True] if "setup_changed" in tl.columns else pd.DataFrame()
+        if not changed.empty:
+            latest_change = changed.iloc[0]
+            pace = latest_change.get("pace_delta_s")
+            pace_txt = f"{pace:+.3f}s" if pd.notna(pace) else "n/a"
+            st.markdown(
+                f"Latest setup change (session **#{int(latest_change['session_id'])}**): "
+                f"{latest_change.get('setup_delta_summary')} → pace {pace_txt}"
+            )
+    else:
+        st.caption("Setup timeline appears after imports with setup channels.")
+
+    st.subheader("Cross-session overlay")
+    if not sess.empty and len(sess) >= 2:
+        focus_ids = [int(i) for i in sess["id"].tolist()]
+        focus_id = st.selectbox(
+            "Focus session",
+            focus_ids,
+            index=0,
+            format_func=lambda i: session_label(get_session(i, APP_ROOT) or {"id": i}),
+            key="dossier_xsess_focus",
+        )
+        render_cross_session_compare(int(focus_id), track=track, key_prefix="dossier_xsess")
+    elif not sess.empty:
+        st.caption("Import a second session on this track to overlay vs PB / another run.")
+    else:
+        st.caption("No sessions for this filter.")
 
     st.subheader("Corner dossier (latest session best vs lifetime PB)")
     trend = dossier.get("corner_trend")
@@ -466,6 +706,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             "Race map",
             "Corners",
             "Lap compare",
+            "vs Session",
             "Single lap",
             "Tyres",
             "ERS / 2026",
@@ -473,7 +714,18 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             "Coach",
         ]
     )
-    tab_overview, tab_map, tab_corners, tab_compare, tab_single, tab_tyres, tab_ers, tab_setup, tab_coach = tabs
+    (
+        tab_overview,
+        tab_map,
+        tab_corners,
+        tab_compare,
+        tab_xsess,
+        tab_single,
+        tab_tyres,
+        tab_ers,
+        tab_setup,
+        tab_coach,
+    ) = tabs
 
     with tab_overview:
         left, right = st.columns([1.4, 1])
@@ -486,10 +738,30 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 f"Original CSV **{format_bytes(session.get('original_size_bytes'))}** → "
                 f"library **{format_bytes(session.get('stored_size_bytes'))}**"
             )
+            st.subheader("Tags")
+            type_opts = ["(untagged)"] + list(SESSION_TYPES)
+            cur_type = session.get("session_type") or ""
+            type_idx = type_opts.index(cur_type) if cur_type in type_opts else 0
+            edit_type = st.selectbox("Session type", type_opts, index=type_idx, key=f"sess_type_{session['id']}")
+            edit_cond = st.text_input(
+                "Conditions",
+                value=session.get("conditions") or "",
+                key=f"sess_cond_{session['id']}",
+            )
             notes = st.text_area("Notes", value=session.get("notes") or "", height=100)
-            if st.button("Save notes"):
-                update_session_notes(int(session["id"]), notes, APP_ROOT)
+            if st.button("Save tags & notes", key=f"save_tags_{session['id']}"):
+                update_session_tags(
+                    int(session["id"]),
+                    session_type="" if edit_type == "(untagged)" else edit_type,
+                    conditions=edit_cond,
+                    notes=notes,
+                    app_root=APP_ROOT,
+                )
                 st.success("Saved.")
+                st.cache_data.clear()
+                st.rerun()
+            if session.get("setup_fingerprint"):
+                st.caption(f"Setup fingerprint: `{session['setup_fingerprint']}`")
             show = summary.copy()
             show["lap_time"] = show["lap_time"].map(lambda x: f"{x:.3f}")
             show["delta_best"] = show["delta_best"].map(lambda x: f"{x:+.3f}")
@@ -532,17 +804,28 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 use_container_width=True,
                 key="chart_corner_bars",
             )
-            table = corner_cmp.copy() if focus_lap != ref_lap else focus_corners.copy()
-            for col in ("time_s", "ref_time_s", "delta_s", "vmin", "ref_vmin"):
-                if col in table.columns:
-                    table[col] = table[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
-            st.dataframe(table, use_container_width=True, hide_index=True)
             if focus_lap != ref_lap and not corner_cmp.empty and "delta_s" in corner_cmp.columns:
-                worst = corner_cmp[corner_cmp["kind"] == "corner"].sort_values("delta_s", ascending=False).head(3)
-                st.subheader("Biggest losses")
-                for _, row in worst.iterrows():
-                    if pd.notna(row.get("delta_s")):
-                        st.markdown(f"- **{row['corner_name']}**: {row['delta_s']:+.3f}s")
+                # [P1 engineer] phase metrics + sentences — see telemetry.corner_engineer
+                render_corner_engineer_panel(corner_cmp, title="Engineer — corner phases", top_n=3)
+                if not aligned.empty and all(
+                    c in aligned.columns for c in ("ref_brake", "cmp_brake", "ref_speed", "cmp_speed", "lap_distance")
+                ):
+                    markers = compare_brake_markers(aligned)
+                    flagged = [m for m in markers if m.get("flagged")]
+                    if flagged:
+                        st.subheader("Brake markers vs reference")
+                        for m in sorted(flagged, key=lambda x: abs(x["delta_m"]), reverse=True)[:5]:
+                            when = "later" if m["delta_m"] > 0 else "earlier"
+                            st.markdown(
+                                f"- **{m['cmp_onset_m']:.0f} m**: {abs(m['delta_m']):.0f} m {when} than ref "
+                                f"(ref {m['ref_onset_m']:.0f} m · approach ~{m['approach_speed']:.0f} km/h)"
+                            )
+            else:
+                table = focus_corners.copy()
+                for col in ("time_s", "vmin", "brake_point_m", "turn_in_speed", "exit_speed", "throttle_on_m", "trail_brake_s"):
+                    if col in table.columns:
+                        table[col] = table[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+                st.dataframe(table, use_container_width=True, hide_index=True)
 
     with tab_compare:
         if focus_lap == ref_lap:
@@ -601,6 +884,13 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             if picked is not None and abs(picked - float(st.session_state.get("cursor_distance", 0.0))) > 0.75:
                 st.session_state["cursor_distance"] = float(picked)
                 st.rerun()
+
+    with tab_xsess:
+        st.caption(
+            "Overlay this session’s best lap against another library session "
+            "(defaults to the personal-best session for this track)."
+        )
+        render_cross_session_compare(int(session["id"]), track=track, key_prefix=f"browse_xsess_{session['id']}")
 
     with tab_single:
         col_a, col_b = st.columns([1.1, 1.4])
@@ -740,11 +1030,45 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             if focus_ers:
                 f3.metric("SOC empty time", f"{focus_ers.get('empty_pct', 0):.0f}% of lap")
 
+        st.markdown("---")
+        render_2026_channels_panel(df, focus_lap, reference_lap=ref_lap, chart_prefix=f"ers_{session['id']}")
+
     with tab_setup:
         st.caption(
-            "Build from this practice starts from the garage you ran, diagnoses entry / mid / exit, "
-            "then applies a small coordinated tweak. Δt estimates are directional (fuel is most trustworthy)."
+            "Engineer mode: build from this practice starts from the garage you ran, diagnoses entry / mid / exit, "
+            "then applies a small coordinated tweak. "
+            "Browse any track without a session via sidebar **Garage**."
         )
+        if track:
+            with st.expander("Setup evolution on this track", expanded=False):
+                tl = setup_timeline(track, APP_ROOT)
+                if tl.empty:
+                    st.caption("No setup history yet.")
+                else:
+                    show_tl = tl.sort_values("created_at", ascending=False).head(12)
+                    disp = show_tl[
+                        [
+                            c
+                            for c in [
+                                "session_id",
+                                "created_at",
+                                "best_lap_time",
+                                "pace_delta_s",
+                                "setup_delta_summary",
+                                "setup_fingerprint",
+                            ]
+                            if c in show_tl.columns
+                        ]
+                    ].copy()
+                    if "best_lap_time" in disp.columns:
+                        disp["best_lap_time"] = disp["best_lap_time"].map(format_lap_time)
+                    if "pace_delta_s" in disp.columns:
+                        disp["pace_delta_s"] = disp["pace_delta_s"].map(
+                            lambda x: f"{x:+.3f}s" if pd.notna(x) else "—"
+                        )
+                    st.dataframe(disp, use_container_width=True, hide_index=True)
+                    st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
+
         setup = {}
         if session.get("setup_json"):
             try:
@@ -756,18 +1080,10 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         baseline = normalize_setup(setup) if setup else {}
         sid = int(session["id"])
+        ui_id = f"sess_{sid}"
         state_key = f"setup_proposed_{sid}"
         if state_key not in st.session_state:
             st.session_state[state_key] = dict(baseline) if baseline else {}
-
-        def _apply_setup_dict(values: dict) -> None:
-            st.session_state[state_key] = dict(values)
-            for param in SETUP_PARAMS:
-                if param.key not in values:
-                    continue
-                st.session_state[f"setup_sl_{sid}_{param.key}"] = float(
-                    display_value(param, values[param.key])
-                )
 
         st.subheader("Setup builder")
         b1, b2, b3 = st.columns([1.2, 1, 1])
@@ -793,19 +1109,21 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             f"Load typical {setup_track} {setup_variant}",
             key=f"load_typical_{sid}",
         ):
-            _apply_setup_dict(typical_pack["setup"])
+            apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
             st.session_state[f"setup_build_notes_{sid}"] = [
                 typical_pack["notes"],
                 f"Loaded typical {setup_track} {typical_pack['variant']} ({typical_pack['character']}).",
             ]
             st.rerun()
         if baseline and c_load2.button("Load session setup", key=f"load_session_{sid}"):
-            _apply_setup_dict(baseline)
+            apply_setup_to_state(state_key, ui_id, baseline)
             st.session_state.pop(f"setup_build_notes_{sid}", None)
             st.rerun()
         if c_load3.button("Reset tweaker", key=f"setup_reset_{sid}"):
             if baseline:
-                _apply_setup_dict(baseline)
+                apply_setup_to_state(state_key, ui_id, baseline)
+            elif typical_pack:
+                apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
             st.session_state.pop(f"setup_build_notes_{sid}", None)
             st.rerun()
 
@@ -821,7 +1139,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 lap=focus_lap,
                 prefer_typical_base=False,
             )
-            _apply_setup_dict(built.setup)
+            apply_setup_to_state(state_key, ui_id, built.setup)
             notes = list(built.findings)
             if built.diagnosis:
                 notes.insert(0, f"Diagnosis: {built.diagnosis}.")
@@ -841,104 +1159,21 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 if ch:
                     st.dataframe(pd.DataFrame(ch), use_container_width=True, hide_index=True)
 
-        if not baseline and not st.session_state.get(state_key):
-            st.info("Load a typical track setup to start, or import a session that includes setup fields.")
-        else:
-            # Ensure proposed has keys even if session had no setup
-            if not st.session_state.get(state_key) and typical_pack:
-                st.session_state[state_key] = dict(typical_pack["setup"])
-            compare_base = baseline if baseline else normalize_setup(
-                (typical_pack or {}).get("setup") or st.session_state[state_key]
-            )
+        if not st.session_state.get(state_key) and typical_pack:
+            apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
 
-            presets = setup_presets(compare_base) if compare_base else {}
-            if presets:
-                pcols = st.columns(min(4, max(1, len(presets))))
-                for i, (name, preset) in enumerate(presets.items()):
-                    if pcols[i % len(pcols)].button(name, key=f"preset_{sid}_{i}"):
-                        _apply_setup_dict(preset)
-                        st.rerun()
-
-            proposed = dict(st.session_state[state_key])
-            # Slider keys only for params present in proposed/compare_base
-            active_keys = set(proposed) | set(compare_base)
-            groups = {}
-            for param in SETUP_PARAMS:
-                if param.key not in active_keys:
-                    continue
-                groups.setdefault(param.group, []).append(param)
-
-            left, right = st.columns([1.15, 1])
-            with left:
-                st.subheader("Garage tweaker")
-                group_order = ("Fuel", "Aero", "Transmission", "Geometry", "Suspension", "Brakes", "Tyres")
-                for group in group_order:
-                    params = groups.get(group) or []
-                    if not params:
-                        continue
-                    with st.expander(group, expanded=group in ("Aero", "Suspension", "Brakes", "Tyres")):
-                        for param in params:
-                            cur = proposed.get(param.key, compare_base.get(param.key, param.min_v))
-                            disp = display_value(param, cur)
-                            lo = display_value(param, param.min_v)
-                            hi = display_value(param, param.max_v)
-                            step = float(param.step) * float(param.display_scale)
-                            # Streamlit needs a clean step that divides the range
-                            if step <= 0:
-                                step = 1.0
-                            slider_key = f"setup_sl_{sid}_{param.key}"
-                            if slider_key not in st.session_state:
-                                st.session_state[slider_key] = float(min(max(disp, lo), hi))
-                            new_disp = st.slider(
-                                f"{param.label} ({param.unit})" if param.unit else param.label,
-                                min_value=float(lo),
-                                max_value=float(hi),
-                                step=float(step),
-                                key=slider_key,
-                                help=param.notes or None,
-                            )
-                            proposed[param.key] = storage_value(param, new_disp)
-                st.session_state[state_key] = proposed
-
-            est = estimate_setup_delta(
-                compare_base,
-                proposed,
-                track=setup_track or track,
-                reference_lap_time=float(focus_row["lap_time"]),
-            )
-            with right:
-                st.subheader("Estimated impact")
-                verb = "faster" if est.total_dt < 0 else "slower"
-                base_label = "session setup" if baseline else "baseline"
-                st.metric(
-                    "Net estimated Δt",
-                    f"{est.total_dt:+.3f} s",
-                    f"{abs(est.total_dt):.3f}s {verb} than {base_label}",
-                )
-                st.caption(est.confidence)
-                st.info(est.aero_balance_note)
-                frame = estimate_to_frame(est)
-                if not frame.empty:
-                    st.plotly_chart(plots.setup_delta_bars(frame), use_container_width=True, key="chart_setup_delta")
-                    st.plotly_chart(
-                        plots.setup_breakdown_pie(est.breakdown),
-                        use_container_width=True,
-                        key="chart_setup_break",
-                    )
-                    show = frame.copy()
-                    show["Est. Δt (s)"] = show["Est. Δt (s)"].map(lambda x: f"{x:+.3f}")
-                    show["Δ units"] = show["Δ units"].map(lambda x: f"{x:+.3g}")
-                    st.dataframe(show, use_container_width=True, hide_index=True)
-                else:
-                    st.write("Move a slider, load a typical setup, or build from practice.")
-
-                # Quick card of current proposed key numbers
-                st.subheader("Proposed card")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("FW / RW", f"{proposed.get('wing_setup_0', 0):.0f} / {proposed.get('wing_setup_1', 0):.0f}")
-                m2.metric("Bias", f"{proposed.get('brake_bias_setup', 0) * 100:.0f}%")
-                m3.metric("Fuel", f"{proposed.get('fuel_setup', 0):.0f}")
-                m4.metric("ARB F/R", f"{proposed.get('arb_setup_0', 0):.0f}/{proposed.get('arb_setup_1', 0):.0f}")
+        compare_base = baseline if baseline else normalize_setup(
+            (typical_pack or {}).get("setup") or st.session_state.get(state_key) or {}
+        )
+        render_garage_tweaker(
+            ui_id=ui_id,
+            state_key=state_key,
+            compare_base=compare_base,
+            track=setup_track or track,
+            reference_lap_time=float(focus_row["lap_time"]),
+            base_label="session setup" if baseline else "baseline",
+            chart_prefix=f"sess_{sid}",
+        )
 
         st.markdown("---")
         st.subheader("Tyre & fuel saving")
@@ -981,6 +1216,14 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                     unsafe_allow_html=True,
                 )
 
+        st.markdown("---")
+        render_stint_windows_panel(
+            df,
+            track_length_m=float(track_length) if track_length else None,
+            default_target_laps=None,
+            chart_prefix=f"stint_{session['id']}",
+        )
+
     with tab_coach:
         lap_rows = get_session_laps(int(session["id"]), APP_ROOT)
         stored = None
@@ -995,24 +1238,33 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             render_insights(stored)
         else:
             render_insights(
-                generate_insights(df, focus_lap, reference_lap=ref_lap if ref_lap != focus_lap else best_lap)
+                generate_insights(
+                    df,
+                    focus_lap,
+                    reference_lap=ref_lap if ref_lap != focus_lap else best_lap,
+                    track=track,
+                    track_length=track_length,
+                )
             )
         if focus_lap != ref_lap and not corner_cmp.empty and "delta_s" in corner_cmp.columns:
             st.markdown("---")
-            st.subheader("Corner callouts")
-            worst = corner_cmp[corner_cmp["kind"] == "corner"].sort_values("delta_s", ascending=False).head(3)
-            for _, row in worst.iterrows():
-                if pd.notna(row.get("delta_s")) and row["delta_s"] > 0.02:
-                    st.markdown(
-                        f"- Losing **{row['delta_s']:.3f}s** in **{row['corner_name']}** "
-                        f"({row['start_m']:.0f}–{row['end_m']:.0f} m)."
-                    )
+            # Engineer sentences for worst corners (phase diagnosis)
+            render_corner_engineer_panel(
+                corner_cmp, title="Corner callouts", top_n=3, show_table=False
+            )
 
         st.markdown("---")
         st.subheader("ERS / 2026 energy callouts")
         for tip in practice_ers_insights(
             df, focus_lap, reference_lap=ref_lap, track=track, track_length=track_length
         ):
+            if tip.severity in ("tip", "warning"):
+                css = "insight-tip" if tip.severity == "tip" else "insight-warning"
+                st.markdown(
+                    f'<div class="{css}"><strong>{tip.title}</strong><br/>{tip.detail}</div>',
+                    unsafe_allow_html=True,
+                )
+        for tip in channels_2026_insights(df, focus_lap, reference_lap=ref_lap):
             if tip.severity in ("tip", "warning"):
                 css = "insight-tip" if tip.severity == "tip" else "insight-warning"
                 st.markdown(
@@ -1029,19 +1281,106 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                     f'<div class="{css}"><strong>[{tip.category}] {tip.title}</strong><br/>{tip.detail}</div>',
                     unsafe_allow_html=True,
                 )
+        for tip in stint_window_insights(
+            df,
+            track_length_m=float(track_length) if track_length else None,
+        ):
+            if tip.severity in ("tip", "warning"):
+                css = "insight-tip" if tip.severity == "tip" else "insight-warning"
+                st.markdown(
+                    f'<div class="{css}"><strong>[{tip.category}] {tip.title}</strong><br/>{tip.detail}</div>',
+                    unsafe_allow_html=True,
+                )
+
+
+def render_garage() -> None:
+    """Browse Quali/Race defaults for every catalog track — no session import required."""
+    st.subheader("Garage")
+    st.caption(
+        "Default F1 26 setups for every calendar track. Dial these in before practice — "
+        "no imported session needed. Open a session Setup tab later to engineer from telemetry."
+    )
+
+    tracks = list_tracks_with_setups()
+    if not tracks:
+        st.warning("No track setups available.")
+        return
+
+    raced_canon = {
+        name
+        for t in list_tracks(APP_ROOT)
+        if (name := normalize_track_name(t))
+    }
+
+    if st.session_state.pop("garage_nav_pending", False):
+        pending = st.session_state.get("garage_track")
+        if pending in tracks:
+            st.session_state["garage_track_select"] = pending
+
+    g1, g2, g3 = st.columns([1.4, 1, 1])
+    with g1:
+        garage_track = st.selectbox(
+            "Track",
+            tracks,
+            key="garage_track_select",
+            format_func=lambda t: f"{t}  · raced" if t in raced_canon else t,
+        )
+    with g2:
+        garage_variant = st.radio("Variant", ["Quali", "Race"], horizontal=True, key="garage_variant")
+    with g3:
+        st.write("")
+        st.write("")
+        raced_label = "In your library" if garage_track in raced_canon else "Not raced yet"
+        st.caption(raced_label)
+
+    st.session_state["garage_track"] = garage_track
+
+    ui_id = f"g_{garage_track}_{garage_variant.lower()}"
+    state_key = f"garage_proposed_{garage_track}_{garage_variant.lower()}"
+    pack_key = f"garage_loaded_{garage_track}_{garage_variant.lower()}"
+
+    typical_pack = get_typical_setup(garage_track, garage_variant.lower())
+    if typical_pack is None:
+        st.error(f"No typical setup for {garage_track}.")
+        return
+
+    if not st.session_state.get(pack_key):
+        apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
+        st.session_state[pack_key] = True
+
+    st.caption(f"**{garage_track}** · {typical_pack['character']} — {typical_pack['notes']}")
+
+    if st.button(f"Reset to typical {garage_variant}", type="primary", key="garage_reset"):
+        apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
+        st.session_state[pack_key] = True
+        st.rerun()
+
+    compare_base = normalize_setup(typical_pack["setup"])
+    render_garage_tweaker(
+        ui_id=ui_id,
+        state_key=state_key,
+        compare_base=compare_base,
+        track=garage_track,
+        reference_lap_time=None,
+        base_label=f"typical {garage_variant.lower()}",
+        chart_prefix=f"garage_{garage_track}_{garage_variant.lower()}",
+    )
 
 
 def main() -> None:
     init_db(APP_ROOT)
     ensure_progress_schema(APP_ROOT)
+    ensure_session_meta_schema(APP_ROOT)
 
     st.title("🏎️ F1 26 Telemetry Analyzer")
-    st.caption("Session library · track dossier · corner losses · map cursor")
+    st.caption("Session library · Garage · track dossier · corner losses · map cursor")
 
     if "progress_backfilled" not in st.session_state:
         with st.spinner("Indexing progress from existing sessions…"):
             n = backfill_progress_from_library(APP_ROOT)
             st.session_state["progress_backfilled"] = n
+    if "setup_fp_backfilled" not in st.session_state:
+        st.session_state["setup_fp_backfilled"] = backfill_setup_fingerprints(APP_ROOT)
 
     stats = library_stats(APP_ROOT)
     s1, s2, s3, s4 = st.columns(4)
@@ -1050,17 +1389,24 @@ def main() -> None:
     s3.metric("Library size", format_bytes(stats["stored_bytes"]))
     s4.metric("CSV space saved", format_bytes(max(0, stats["saved_bytes"])))
 
+    modes = ["Browse sessions", "Track dossier", "Garage", "Import CSV"]
+    if "sidebar_mode" not in st.session_state:
+        st.session_state["sidebar_mode"] = "Browse sessions"
+    # Honour dossier → Garage navigation
+    if st.session_state.get("nav_mode") in modes:
+        st.session_state["sidebar_mode"] = st.session_state.pop("nav_mode")
+
     with st.sidebar:
         st.header("Library")
         mode = st.radio(
             "Mode",
-            ["Browse sessions", "Track dossier", "Import CSV"],
-            index=0,
+            modes,
+            key="sidebar_mode",
         )
         if mode == "Import CSV":
             sidebar_import()
             st.stop()
-        if mode == "Track dossier":
+        if mode in ("Track dossier", "Garage"):
             pass  # rendered below
         else:
             session = pick_session()
@@ -1078,6 +1424,10 @@ def main() -> None:
 
     if mode == "Track dossier":
         render_dossier()
+        return
+
+    if mode == "Garage":
+        render_garage()
         return
 
     with st.spinner("Loading compact telemetry…"):

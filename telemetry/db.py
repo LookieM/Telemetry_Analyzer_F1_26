@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     setup_json TEXT,
     original_size_bytes INTEGER,
     stored_size_bytes INTEGER,
-    source_deleted INTEGER DEFAULT 0
+    source_deleted INTEGER DEFAULT 0,
+    session_type TEXT DEFAULT '',
+    conditions TEXT DEFAULT '',
+    setup_fingerprint TEXT
 );
 
 CREATE TABLE IF NOT EXISTS laps (
@@ -120,6 +123,16 @@ CREATE INDEX IF NOT EXISTS idx_sessions_track ON sessions(track);
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
 """
 
+# Session type tags for dossier filters / race-ops notebook
+SESSION_TYPES = ("FP1", "FP2", "FP3", "Quali", "Race", "Test")
+
+# Columns added after the initial SCHEMA (ALTER / ensure_* — never break old DBs)
+_SESSION_META_COLUMNS: dict[str, str] = {
+    "session_type": "TEXT DEFAULT ''",
+    "conditions": "TEXT DEFAULT ''",
+    "setup_fingerprint": "TEXT",
+}
+
 
 def default_data_dir(app_root: Path | None = None) -> Path:
     root = app_root or Path(__file__).resolve().parent.parent
@@ -144,6 +157,23 @@ def file_hash(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return h.hexdigest()
 
 
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r["name"] if isinstance(r, sqlite3.Row) else r[1] for r in rows}
+
+
+def ensure_session_meta_schema(app_root: Path | None = None) -> None:
+    """Add session_type / conditions / setup_fingerprint without rewriting old DBs."""
+    with connect(app_root) as conn:
+        existing = _table_columns(conn, "sessions")
+        for col, decl in _SESSION_META_COLUMNS.items():
+            if col not in existing:
+                conn.execute(f"ALTER TABLE sessions ADD COLUMN {col} {decl}")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_type ON sessions(session_type)"
+        )
+
+
 @contextmanager
 def connect(app_root: Path | None = None) -> Iterator[sqlite3.Connection]:
     path = db_path(app_root)
@@ -162,6 +192,7 @@ def connect(app_root: Path | None = None) -> Iterator[sqlite3.Connection]:
 def init_db(app_root: Path | None = None) -> Path:
     with connect(app_root) as conn:
         conn.execute("SELECT 1")
+    ensure_session_meta_schema(app_root)
     return db_path(app_root)
 
 
@@ -211,17 +242,23 @@ def extract_track_outline(df: pd.DataFrame, max_points: int = 800) -> dict[str, 
 def list_sessions(
     app_root: Path | None = None,
     track: str | None = None,
+    session_type: str | None = None,
 ) -> pd.DataFrame:
+    ensure_session_meta_schema(app_root)
+    clauses: list[str] = []
+    params: list[Any] = []
+    if track:
+        clauses.append("track = ?")
+        params.append(track)
+    if session_type:
+        clauses.append("session_type = ?")
+        params.append(session_type)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with connect(app_root) as conn:
-        if track:
-            rows = conn.execute(
-                "SELECT * FROM sessions WHERE track = ? ORDER BY created_at DESC",
-                (track,),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM sessions ORDER BY created_at DESC"
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM sessions {where} ORDER BY created_at DESC",
+            params,
+        ).fetchall()
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame([dict(r) for r in rows])
@@ -277,6 +314,47 @@ def list_tracks(app_root: Path | None = None) -> list[str]:
 def update_session_notes(session_id: int, notes: str, app_root: Path | None = None) -> None:
     with connect(app_root) as conn:
         conn.execute("UPDATE sessions SET notes = ? WHERE id = ?", (notes, session_id))
+
+
+def update_session_tags(
+    session_id: int,
+    *,
+    session_type: str | None = None,
+    conditions: str | None = None,
+    notes: str | None = None,
+    app_root: Path | None = None,
+) -> None:
+    """Update session type / conditions / notes (None = leave unchanged)."""
+    ensure_session_meta_schema(app_root)
+    sets: list[str] = []
+    params: list[Any] = []
+    if session_type is not None:
+        sets.append("session_type = ?")
+        params.append(session_type.strip())
+    if conditions is not None:
+        sets.append("conditions = ?")
+        params.append(conditions.strip())
+    if notes is not None:
+        sets.append("notes = ?")
+        params.append(notes)
+    if not sets:
+        return
+    params.append(session_id)
+    with connect(app_root) as conn:
+        conn.execute(f"UPDATE sessions SET {', '.join(sets)} WHERE id = ?", params)
+
+
+def update_session_setup_fingerprint(
+    session_id: int,
+    fingerprint: str | None,
+    app_root: Path | None = None,
+) -> None:
+    ensure_session_meta_schema(app_root)
+    with connect(app_root) as conn:
+        conn.execute(
+            "UPDATE sessions SET setup_fingerprint = ? WHERE id = ?",
+            (fingerprint, session_id),
+        )
 
 
 def delete_session(session_id: int, app_root: Path | None = None) -> None:
@@ -344,7 +422,12 @@ def insert_imported_session(
     stored_size: int,
     source_deleted: bool,
     app_root: Path | None = None,
+    notes: str = "",
+    session_type: str = "",
+    conditions: str = "",
+    setup_fingerprint: str | None = None,
 ) -> int:
+    ensure_session_meta_schema(app_root)
     now = datetime.now(timezone.utc).isoformat()
     best_lap = int(summary.loc[summary["is_best"], "lap"].iloc[0]) if not summary.empty else None
     best_time = float(summary["lap_time"].min()) if not summary.empty else None
@@ -355,8 +438,9 @@ def insert_imported_session(
             INSERT INTO sessions (
                 created_at, source_name, source_hash, track, car, track_length, notes,
                 sample_count, lap_count, best_lap, best_lap_time, telemetry_path,
-                setup_json, original_size_bytes, stored_size_bytes, source_deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                setup_json, original_size_bytes, stored_size_bytes, source_deleted,
+                session_type, conditions, setup_fingerprint
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 now,
@@ -365,6 +449,7 @@ def insert_imported_session(
                 meta.get("track"),
                 meta.get("car"),
                 meta.get("track_length"),
+                notes or "",
                 int(meta.get("samples") or 0),
                 int(len(summary)),
                 best_lap,
@@ -374,6 +459,9 @@ def insert_imported_session(
                 original_size,
                 stored_size,
                 1 if source_deleted else 0,
+                (session_type or "").strip(),
+                (conditions or "").strip(),
+                setup_fingerprint,
             ),
         )
         session_id = int(cur.lastrowid)

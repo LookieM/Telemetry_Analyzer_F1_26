@@ -298,3 +298,21 @@ def stint_saving_insights(
         )
     )
     return tips
+
+
+def append_window_insights(
+    tips: list[StintTip],
+    df: pd.DataFrame,
+    target_laps: int | None = None,
+    race_distance_m: float | None = None,
+    track_length_m: float | None = None,
+) -> list[StintTip]:
+    """Attach fuel/tyre window projections after per-lap saving tips."""
+    from .race_windows import stint_window_insights
+
+    return list(tips) + stint_window_insights(
+        df,
+        target_laps=target_laps,
+        race_distance_m=race_distance_m,
+        track_length_m=track_length_m,
+    )

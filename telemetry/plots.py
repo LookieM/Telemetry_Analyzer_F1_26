@@ -866,3 +866,186 @@ def stint_efficiency_chart(table: pd.DataFrame) -> go.Figure:
         yaxis_title="Lap time (s)",
     )
     return fig
+
+
+def active_aero_plot(lap_df: pd.DataFrame) -> go.Figure:
+    """Active aero mode vs distance, with optional speed overlay."""
+    from .ers import enrich_2026_channels
+
+    lap = enrich_2026_channels(lap_df)
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    if lap.empty or "activeAero_mode" not in lap.columns:
+        fig.update_layout(**DARK_LAYOUT, title="Active aero", height=360)
+        return fig
+    x, x_title = _x_axis(lap)
+    fig.add_trace(
+        go.Scatter(
+            x=x,
+            y=lap["activeAero_mode"],
+            name="Aero mode",
+            line=dict(color="#38bdf8", width=2, shape="vh"),
+        ),
+        secondary_y=False,
+    )
+    if "speed" in lap.columns:
+        fig.add_trace(
+            go.Scatter(x=x, y=lap["speed"], name="Speed", line=dict(color="#94a3b8", width=1), opacity=0.7),
+            secondary_y=True,
+        )
+    fig.update_layout(**DARK_LAYOUT, title="Active aero vs distance (1 = low drag)", height=360, hovermode="x unified")
+    fig.update_xaxes(title_text=x_title)
+    fig.update_yaxes(title_text="Mode", secondary_y=False, dtick=1)
+    fig.update_yaxes(title_text="Speed", secondary_y=True, showgrid=False)
+    return fig
+
+
+def active_aero_profile_bars(profile: pd.DataFrame, ref_profile: pd.DataFrame | None = None) -> go.Figure:
+    fig = go.Figure()
+    if profile.empty:
+        fig.update_layout(**DARK_LAYOUT, title="Low-drag aero by distance", height=360)
+        return fig
+    fig.add_trace(
+        go.Bar(
+            x=profile["dist_mid"],
+            y=profile["low_drag_pct"],
+            name="Focus low-drag %",
+            marker_color="#38bdf8",
+        )
+    )
+    if ref_profile is not None and not ref_profile.empty:
+        fig.add_trace(
+            go.Bar(
+                x=ref_profile["dist_mid"],
+                y=ref_profile["low_drag_pct"],
+                name="Ref low-drag %",
+                marker_color="#64748b",
+            )
+        )
+    fig.update_layout(
+        **DARK_LAYOUT,
+        title="Active aero: % of bin in low-drag",
+        height=360,
+        barmode="group",
+        xaxis_title="Distance (m)",
+        yaxis_title="% low drag",
+    )
+    return fig
+
+
+def power_split_plot(profile: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    if profile.empty:
+        fig.update_layout(**DARK_LAYOUT, title="ICE vs MGUK power", height=380)
+        return fig
+    fig.add_trace(
+        go.Bar(x=profile["dist_mid"], y=profile["ice_kw"], name="ICE (kW)", marker_color="#fbbf24")
+    )
+    fig.add_trace(
+        go.Bar(x=profile["dist_mid"], y=profile["mguk_kw"], name="MGUK (kW)", marker_color="#c084fc")
+    )
+    fig.update_layout(
+        **DARK_LAYOUT,
+        title="ICE vs MGUK power along lap",
+        height=380,
+        barmode="stack",
+        xaxis_title="Distance (m)",
+        yaxis_title="kW (avg)",
+    )
+    return fig
+
+
+def overtake_soc_plot(lap_df: pd.DataFrame) -> go.Figure:
+    from .ers import overtake_timeline
+
+    tl = overtake_timeline(lap_df)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.45, 0.55])
+    if tl.empty:
+        fig.update_layout(**DARK_LAYOUT, title="Overtake / SOC", height=400)
+        return fig
+    x = tl["lap_distance"]
+    if "ot_allowed" in tl.columns:
+        fig.add_trace(
+            go.Scatter(x=x, y=tl["ot_allowed"], name="Allowed", line=dict(color="#94a3b8", shape="vh")),
+            row=1,
+            col=1,
+        )
+    if "ot_active" in tl.columns:
+        fig.add_trace(
+            go.Scatter(x=x, y=tl["ot_active"], name="Used", line=dict(color="#f472b6", shape="vh", width=2)),
+            row=1,
+            col=1,
+        )
+    if "ers_store_mj" in tl.columns:
+        fig.add_trace(
+            go.Scatter(x=x, y=tl["ers_store_mj"], name="SOC (MJ)", line=dict(color="#c084fc", width=2)),
+            row=2,
+            col=1,
+        )
+    fig.update_layout(**DARK_LAYOUT, title="Overtake available / used + SOC", height=420, hovermode="x unified")
+    fig.update_xaxes(title_text="Distance (m)", row=2, col=1)
+    fig.update_yaxes(title_text="Flag", row=1, col=1, range=[-0.05, 1.05])
+    fig.update_yaxes(title_text="MJ", row=2, col=1)
+    return fig
+
+
+def fuel_window_plot(summary: pd.DataFrame, projection: pd.DataFrame, fuel_window=None) -> go.Figure:
+    fig = go.Figure()
+    if not summary.empty and "fuel_end" in summary.columns:
+        fig.add_trace(
+            go.Scatter(
+                x=summary["lap"],
+                y=summary["fuel_end"],
+                name="Fuel (actual)",
+                mode="lines+markers",
+                line=dict(color="#38bdf8", width=2),
+            )
+        )
+    if projection is not None and not projection.empty and projection["fuel_proj"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=projection["lap"],
+                y=projection["fuel_proj"],
+                name="Fuel (projected)",
+                mode="lines",
+                line=dict(color="#38bdf8", width=2, dash="dash"),
+            )
+        )
+    if fuel_window is not None and getattr(fuel_window, "target_laps", None) is not None:
+        fig.add_vline(
+            x=fuel_window.target_laps - 1,
+            line_dash="dot",
+            line_color="#fbbf24",
+            annotation_text="Target",
+        )
+    fig.add_hline(y=0, line_dash="dot", line_color="#f87171")
+    fig.update_layout(**DARK_LAYOUT, title="Fuel remaining window", height=360, xaxis_title="Lap", yaxis_title="Fuel")
+    return fig
+
+
+def tyre_cliff_plot(summary: pd.DataFrame, projection: pd.DataFrame, tyre_cliff=None) -> go.Figure:
+    fig = go.Figure()
+    if not summary.empty and "tyre_wear_avg" in summary.columns:
+        wear = summary["tyre_wear_avg"].where(summary["tyre_wear_avg"] >= 0)
+        fig.add_trace(
+            go.Scatter(
+                x=summary["lap"],
+                y=wear,
+                name="Wear % (actual)",
+                mode="lines+markers",
+                line=dict(color="#f97316", width=2),
+            )
+        )
+    if projection is not None and not projection.empty and projection["wear_proj_pct"].notna().any():
+        fig.add_trace(
+            go.Scatter(
+                x=projection["lap"],
+                y=projection["wear_proj_pct"],
+                name="Wear % (projected)",
+                mode="lines",
+                line=dict(color="#f97316", width=2, dash="dash"),
+            )
+        )
+    cliff = getattr(tyre_cliff, "cliff_wear_pct", 55.0) if tyre_cliff is not None else 55.0
+    fig.add_hline(y=cliff, line_dash="dot", line_color="#ef4444", annotation_text=f"Cliff {cliff:.0f}%")
+    fig.update_layout(**DARK_LAYOUT, title="Tyre wear cliff projection", height=360, xaxis_title="Lap", yaxis_title="Wear %")
+    return fig
