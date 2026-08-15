@@ -22,10 +22,237 @@ def _pct(x: float) -> str:
     return f"{x:.1f}%"
 
 
+def _brake_onsets(
+    dist: np.ndarray,
+    brake: np.ndarray,
+    speed: np.ndarray,
+    *,
+    brake_on: float = 0.40,
+    brake_off: float = 0.18,
+    min_approach_speed: float = 160.0,
+    min_gap_m: float = 70.0,
+) -> list[dict[str, float]]:
+    """
+    Detect heavy brake markers after a high-speed approach.
+
+    Each event: onset distance, peak-brake distance, peak pressure, approach speed.
+    """
+    if len(dist) < 5 or len(brake) != len(dist):
+        return []
+    events: list[dict[str, float]] = []
+    i = 1
+    n = len(dist)
+    while i < n:
+        if brake[i] >= brake_on and brake[i - 1] < brake_off:
+            # Approach speed: max in the ~120 m before onset
+            d0 = float(dist[i])
+            pre = (dist >= d0 - 120.0) & (dist < d0)
+            if pre.any():
+                approach = float(np.nanmax(speed[pre])) if len(speed) == n else float("nan")
+            else:
+                approach = float(speed[i]) if len(speed) == n else float("nan")
+            if not np.isfinite(approach) or approach < min_approach_speed:
+                i += 1
+                continue
+            # Peak within this braking zone until release
+            j = i
+            peak_i = i
+            while j < n and not (brake[j] < brake_off and j > i + 2):
+                if brake[j] > brake[peak_i]:
+                    peak_i = j
+                # End event if we've travelled far with low brake
+                if dist[j] - d0 > 250:
+                    break
+                j += 1
+            if events and d0 - events[-1]["onset_m"] < min_gap_m:
+                i = max(i + 1, j)
+                continue
+            events.append(
+                {
+                    "onset_m": d0,
+                    "peak_m": float(dist[peak_i]),
+                    "peak_brake": float(brake[peak_i]),
+                    "approach_speed": approach,
+                }
+            )
+            i = max(i + 1, j)
+            continue
+        i += 1
+    return events
+
+
+def compare_brake_markers(
+    aligned: pd.DataFrame,
+    *,
+    match_radius_m: float = 90.0,
+    flag_m: float = 8.0,
+) -> list[dict]:
+    """
+    Match focus vs reference brake onsets on an aligned lap.
+
+    Returns list of dicts with onset distances and delta_m (focus − ref;
+    positive = focus brakes later).
+    """
+    need = ["lap_distance", "ref_brake", "cmp_brake", "ref_speed", "cmp_speed"]
+    if aligned.empty or any(c not in aligned.columns for c in need):
+        return []
+    dist = aligned["lap_distance"].to_numpy(dtype=float)
+    ref_ev = _brake_onsets(dist, aligned["ref_brake"].to_numpy(dtype=float), aligned["ref_speed"].to_numpy(dtype=float))
+    cmp_ev = _brake_onsets(dist, aligned["cmp_brake"].to_numpy(dtype=float), aligned["cmp_speed"].to_numpy(dtype=float))
+    if not ref_ev or not cmp_ev:
+        return []
+
+    used_ref: set[int] = set()
+    matched: list[dict] = []
+    for ce in cmp_ev:
+        best_i = None
+        best_abs = match_radius_m + 1.0
+        for ri, re in enumerate(ref_ev):
+            if ri in used_ref:
+                continue
+            gap = abs(ce["onset_m"] - re["onset_m"])
+            if gap < best_abs:
+                best_abs = gap
+                best_i = ri
+        if best_i is None or best_abs > match_radius_m:
+            continue
+        used_ref.add(best_i)
+        re = ref_ev[best_i]
+        delta_m = float(ce["onset_m"] - re["onset_m"])
+        delta_peak_m = float(ce["peak_m"] - re["peak_m"])
+        matched.append(
+            {
+                "cmp_onset_m": ce["onset_m"],
+                "ref_onset_m": re["onset_m"],
+                "delta_m": delta_m,
+                "delta_peak_m": delta_peak_m,
+                "cmp_peak_m": ce["peak_m"],
+                "ref_peak_m": re["peak_m"],
+                "approach_speed": ce["approach_speed"],
+                "flagged": abs(delta_m) >= flag_m,
+            }
+        )
+    return matched
+
+
+def _brake_marker_insights(
+    aligned: pd.DataFrame,
+    reference_lap: int,
+    *,
+    track: str | None = None,
+    track_length: float | None = None,
+    focus_df: pd.DataFrame | None = None,
+    ref_df: pd.DataFrame | None = None,
+) -> list[Insight]:
+    """Per-marker early/late brake callouts; enrich with corner names when possible."""
+    matched = compare_brake_markers(aligned)
+    if not matched:
+        return []
+
+    corner_lookup = None
+    if track is not None or (focus_df is not None and ref_df is not None):
+        try:
+            from .corners import analyze_lap_corners, compare_corners, resolve_corners
+
+            corners = resolve_corners(track, track_length, focus_df if focus_df is not None else ref_df)
+            if corners and focus_df is not None and ref_df is not None:
+                fc = analyze_lap_corners(focus_df, track, track_length, corners=corners)
+                rc = analyze_lap_corners(ref_df, track, track_length, corners=corners)
+                cmp = compare_corners(fc, rc)
+                if not cmp.empty and "delta_brake_point_m" in cmp.columns:
+                    corner_lookup = cmp
+        except Exception:
+            corner_lookup = None
+
+    insights: list[Insight] = []
+    flagged = [m for m in matched if m["flagged"]]
+    if not flagged:
+        return insights
+
+    # Prefer largest |delta| markers (up to 3)
+    flagged = sorted(flagged, key=lambda m: abs(m["delta_m"]), reverse=True)[:3]
+    early = [m for m in flagged if m["delta_m"] < 0]
+    late = [m for m in flagged if m["delta_m"] > 0]
+
+    def _name_near(dist_m: float) -> str:
+        if corner_lookup is not None and "start_m" in corner_lookup.columns:
+            hit = corner_lookup[
+                (corner_lookup["start_m"] - 100 <= dist_m) & (corner_lookup["end_m"] + 20 >= dist_m)
+            ]
+            if not hit.empty:
+                # Prefer corner rows with a brake delta
+                row = hit.iloc[0]
+                return str(row.get("corner_name") or row.get("corner_id") or f"{dist_m:.0f} m")
+        return f"{dist_m:.0f} m"
+
+    for m in early[:2]:
+        insights.append(
+            Insight(
+                "tip",
+                f"Early brake - {_name_near(m['cmp_onset_m'])}",
+                f"You brake {abs(m['delta_m']):.0f} m earlier than lap {reference_lap} "
+                f"(focus {m['cmp_onset_m']:.0f} m vs ref {m['ref_onset_m']:.0f} m, "
+                f"approach ~{m['approach_speed']:.0f} km/h). Try a later marker if the car still stops.",
+                "braking",
+            )
+        )
+    for m in late[:2]:
+        insights.append(
+            Insight(
+                "info" if m["delta_m"] < 15 else "tip",
+                f"Later brake - {_name_near(m['cmp_onset_m'])}",
+                f"You brake {m['delta_m']:.0f} m later than lap {reference_lap} "
+                f"(focus {m['cmp_onset_m']:.0f} m vs ref {m['ref_onset_m']:.0f} m). "
+                "Good aggression — watch lock-ups and turn-in stability.",
+                "braking",
+            )
+        )
+
+    # Corner-table brake deltas when available (named corners)
+    if corner_lookup is not None and "delta_brake_point_m" in corner_lookup.columns:
+        crows = corner_lookup.copy()
+        if "kind" in crows.columns:
+            crows = crows[crows["kind"] == "corner"]
+        crows = crows[crows["delta_brake_point_m"].notna()]
+        crows = crows[crows["delta_brake_point_m"].abs() >= 8]
+        crows = crows.assign(_abs_dbp=crows["delta_brake_point_m"].abs()).sort_values(
+            "_abs_dbp", ascending=False
+        ).head(2)
+        for _, row in crows.iterrows():
+            d = float(row["delta_brake_point_m"])
+            name = str(row.get("corner_name") or row["corner_id"])
+            title_key = f"Brake marker - {name}"
+            if any(ins.title == title_key for ins in insights):
+                continue
+            if d < 0:
+                insights.append(
+                    Insight(
+                        "tip",
+                        title_key,
+                        f"{name}: brake point {abs(d):.0f} m earlier than reference "
+                        f"({row['brake_point_m']:.0f} m vs {row.get('ref_brake_point_m', float('nan')):.0f} m).",
+                        "braking",
+                    )
+                )
+            else:
+                insights.append(
+                    Insight(
+                        "info",
+                        title_key,
+                        f"{name}: brake point {d:.0f} m later than reference "
+                        f"({row['brake_point_m']:.0f} m vs {row.get('ref_brake_point_m', float('nan')):.0f} m).",
+                        "braking",
+                    )
+                )
+    return insights
+
+
 def generate_insights(
     df: pd.DataFrame,
     lap: int,
     reference_lap: int | None = None,
+    track: str | None = None,
+    track_length: float | None = None,
 ) -> list[Insight]:
     """Return human-readable coaching notes for a lap (optionally vs reference)."""
     insights: list[Insight] = []
@@ -196,52 +423,18 @@ def generate_insights(
                             )
                         )
 
-                # Brake point comparison: first heavy brake after high speed
-                if all(c in aligned.columns for c in ["ref_brake", "cmp_brake", "ref_speed", "lap_distance"]):
-                    for label, brake_col in (("ref", "ref_brake"), ("cmp", "cmp_brake")):
-                        pass
-                    # Find zones where speed > 200 then brake > 0.4
-                    heavy = aligned["cmp_brake"] > 0.45
-                    ref_heavy = aligned["ref_brake"] > 0.45
-                    if heavy.any() and ref_heavy.any():
-                        # Approximate: compare distance of first heavy brake in last third of high-speed approaches
-                        # Simpler metric: average distance where brake crosses 0.4 while decelerating
-                        cmp_on = aligned.loc[(aligned["cmp_brake"] > 0.4) & (aligned["ref_speed"] > 180), "lap_distance"]
-                        ref_on = aligned.loc[(aligned["ref_brake"] > 0.4) & (aligned["ref_speed"] > 180), "lap_distance"]
-                        if len(cmp_on) and len(ref_on):
-                            # Use early samples of each braking event groups — crude: median of first 5% of brake points
-                            early_cmp = float(cmp_on.iloc[: max(1, len(cmp_on) // 20)].mean())
-                            early_ref = float(ref_on.iloc[: max(1, len(ref_on) // 20)].mean())
-                            # Not very reliable globally; instead count samples where cmp brakes while ref still full throttle
-                            early_brake = (
-                                (aligned["cmp_brake"] > 0.3)
-                                & (aligned["ref_throttle"] > 0.9)
-                                & (aligned["ref_speed"] > 150)
-                            )
-                            late_brake = (
-                                (aligned["ref_brake"] > 0.3)
-                                & (aligned["cmp_throttle"] > 0.9)
-                                & (aligned["cmp_speed"] > 150)
-                            )
-                            if early_brake.sum() > 25:
-                                insights.append(
-                                    Insight(
-                                        "tip",
-                                        "Earlier braking than reference",
-                                        "Multiple zones where you brake while the reference is still flat out. "
-                                        "Try later braking points on those approaches.",
-                                        "braking",
-                                    )
-                                )
-                            elif late_brake.sum() > 25:
-                                insights.append(
-                                    Insight(
-                                        "info",
-                                        "Later braking than reference",
-                                        "You often stay flat longer than the reference — good aggression, watch lock-ups.",
-                                        "braking",
-                                    )
-                                )
+                # Brake markers: onset / peak vs reference (per event, optionally named corners)
+                if all(c in aligned.columns for c in ["ref_brake", "cmp_brake", "ref_speed", "cmp_speed", "lap_distance"]):
+                    insights.extend(
+                        _brake_marker_insights(
+                            aligned,
+                            reference_lap,
+                            track=track,
+                            track_length=track_length,
+                            focus_df=lap_df,
+                            ref_df=ref,
+                        )
+                    )
 
     if not insights:
         insights.append(
