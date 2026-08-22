@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from .coach_constants import COAST_HS_MIN_SPEED_KMH, LOCKUP_BRAKE_THRESHOLD
 from .conditions import STATE_LABELS, weather_banner
 from .corner_engineer import corner_engineer_callouts
 from .diagnosis import LapDiagnosis
@@ -248,7 +249,7 @@ def _session_recurring_corner_items(diag: LapDiagnosis) -> list[CoachItem]:
         if avg_loss < 0.025:
             continue
         # Skip duplicate of priority corner item
-        if name == diag.worst_corner and len(rc) == 1:
+        if name == diag.worst_corner:
             continue
         items.append(
             _item(
@@ -282,9 +283,9 @@ def _session_pattern_items(df: pd.DataFrame, sample_laps: list[int], conf: float
         if lap_df.empty:
             continue
         if "coasting" in lap_df.columns and "speed" in lap_df.columns:
-            if float((lap_df["coasting"] & (lap_df["speed"] > 120)).mean()) > 0.04:
+            if float((lap_df["coasting"] & (lap_df["speed"] > COAST_HS_MIN_SPEED_KMH)).mean()) > 0.04:
                 high_coast += 1
-        if "lockup_risk" in lap_df.columns and int(lap_df["lockup_risk"].sum()) > 15:
+        if "lockup_risk" in lap_df.columns and int(lap_df["lockup_risk"].sum()) > LOCKUP_BRAKE_THRESHOLD:
             high_lock += 1
         if "throttle" in lap_df.columns and "brake" in lap_df.columns:
             partial = (lap_df["throttle"] > 0.15) & (lap_df["throttle"] < 0.85) & (lap_df["brake"] < 0.05)
@@ -352,7 +353,6 @@ def collect_session_coach_items(
 ) -> list[CoachItem]:
     """Gather session-wide coach items — trends and recurring issues vs PB."""
     from .ers import channels_2026_insights, session_ers_insights
-    from .insights import generate_insights
     from .stint_coach import session_stint_insights
 
     conf = diagnosis.confidence
@@ -362,21 +362,6 @@ def collect_session_coach_items(
 
     sample_laps = list(diagnosis.evidence.get("sample_laps") or [])
     items.extend(_session_pattern_items(df, sample_laps, conf))
-
-    # PB lap technique baseline (not per selected lap)
-    for ins in generate_insights(
-        df,
-        best_lap,
-        reference_lap=best_lap,
-        track=track,
-        track_length=track_length,
-        conditions=conditions,
-    ):
-        if ins.severity == "info":
-            continue
-        if ins.category == "weather" and any(i.related_keys == ["weather"] for i in items):
-            continue
-        items.append(_insight_to_item(ins, conf * 0.85))
 
     for tip in session_stint_insights(df, best_lap=best_lap, conditions=conditions):
         if tip.severity == "info":
@@ -514,19 +499,54 @@ def collect_coach_items(
 
 
 def _coast_conflict(items: list[CoachItem]) -> list[CoachItem]:
-    """Resolve coast: fuel-saving vs pace — prefer fuel-critical add-lift-coast."""
+    """Resolve coast: fuel-saving add-lift vs pace-oriented shorten-coast."""
     coast = [i for i in items if "coast" in i.related_keys]
     if len(coast) <= 1:
         return items
-    add_lift = [i for i in coast if "lift" in i.detail.lower() or "little lift" in i.title.lower()]
-    shorten = [i for i in coast if "shorten" in i.detail.lower() or "coasting while fast" in i.title.lower()]
+
+    def _is_add_lift(it: CoachItem) -> bool:
+        t, d = it.title.lower(), it.detail.lower()
+        return (
+            "little lift" in t
+            or "lift-coast" in t
+            or "lift-and-coast" in t
+            or ("lift" in d and it.source == "stint")
+            or "add brief lift" in d
+        )
+
+    def _is_shorten(it: CoachItem) -> bool:
+        t, d = it.title.lower(), it.detail.lower()
+        return "shorten" in d or "coasting while fast" in t
+
+    def _is_coast_early(it: CoachItem) -> bool:
+        return "coasting too early" in it.title.lower()
+
+    drop_ids: set[str] = set()
+    add_lift = [i for i in coast if _is_add_lift(i)]
+    shorten = [i for i in coast if _is_shorten(i)]
+    early = [i for i in coast if _is_coast_early(i)]
+
     if add_lift and shorten:
-        drop_ids = {i.id for i in shorten}
-        # Keep higher-scored coast advice
-        best = max(coast, key=lambda x: x.score)
-        drop_ids = {i.id for i in coast if i.id != best.id}
-        return [i for i in items if i.id not in drop_ids]
-    return items
+        drop_ids.update(i.id for i in shorten)
+    if early and shorten:
+        drop_ids.update(i.id for i in shorten)
+
+    remaining = [i for i in coast if i.id not in drop_ids]
+    if len(remaining) > 1:
+        # Prefer stint fuel-saving over generic pace tips when both remain
+        stint_coast = [i for i in remaining if i.source == "stint" and _is_add_lift(i)]
+        if stint_coast and any(_is_shorten(i) or "coasting while fast" in i.title.lower() for i in remaining):
+            drop_ids.update(
+                i.id
+                for i in remaining
+                if i.source != "stint" and ("coasting while fast" in i.title.lower() or _is_shorten(i))
+            )
+            remaining = [i for i in coast if i.id not in drop_ids]
+        if len(remaining) > 1:
+            best = max(remaining, key=lambda x: x.score)
+            drop_ids.update(i.id for i in remaining if i.id != best.id)
+
+    return [i for i in items if i.id not in drop_ids]
 
 
 def _lockup_conflict(items: list[CoachItem]) -> list[CoachItem]:
@@ -603,15 +623,10 @@ def rank_coach_items(items: list[CoachItem], limit: int = 8) -> tuple[list[Coach
 
 def coach_feed_for_session(
     df: pd.DataFrame,
-    focus_lap: int | None = None,
     *,
-    ref_lap: int | None = None,
-    corner_cmp: pd.DataFrame | None = None,
     track: str | None = None,
     track_length: float | None = None,
     conditions: str | None = None,
-    stored_insights: list[dict] | None = None,
-    prefer_live: bool = True,
     extra_items: list[CoachItem] | None = None,
     best_lap: int | None = None,
 ) -> tuple[LapDiagnosis, list[CoachItem], list[CoachItem]]:
@@ -623,7 +638,7 @@ def coach_feed_for_session(
     if best_lap is None and not summary.empty:
         best_lap = int(summary.loc[summary["is_best"], "lap"].iloc[0])
     elif best_lap is None:
-        best_lap = int(focus_lap or 1)
+        best_lap = 1
 
     diag = build_session_diagnosis(
         df,

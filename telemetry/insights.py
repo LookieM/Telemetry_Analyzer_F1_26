@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .coach_constants import COAST_HS_MIN_SPEED_KMH, LOCKUP_BRAKE_THRESHOLD
 from .metrics import align_laps, compute_time_delta, get_lap
 
 
@@ -285,14 +286,14 @@ def generate_insights(
 
     # --- Single-lap technique ---
     if "coasting" in lap_df.columns and "speed" in lap_df.columns:
-        coast_fast = lap_df["coasting"] & (lap_df["speed"] > 120)
+        coast_fast = lap_df["coasting"] & (lap_df["speed"] > COAST_HS_MIN_SPEED_KMH)
         coast_pct = float(coast_fast.mean() * 100)
         if coast_pct > 4:
             insights.append(
                 Insight(
                     "tip",
                     "Coasting while fast",
-                    f"About {_pct(coast_pct)} of the lap is neither throttle nor brake above 120 km/h. "
+                    f"About {_pct(coast_pct)} of the lap is neither throttle nor brake above {COAST_HS_MIN_SPEED_KMH:.0f} km/h. "
                     "Shorten lift-coast or commit earlier to brake/throttle.",
                     "inputs",
                 )
@@ -325,7 +326,7 @@ def generate_insights(
 
     if "lockup_risk" in lap_df.columns:
         locks = int(lap_df["lockup_risk"].sum())
-        if locks > 15:
+        if locks > LOCKUP_BRAKE_THRESHOLD:
             insights.append(
                 Insight(
                     "warning",

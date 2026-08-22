@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .balance import analyze_practice_balance
 from .corners import normalize_track_name
 from .metrics import build_lap_summary, get_lap
 from .setup_tweaker import SETUP_PARAMS, estimate_setup_delta, normalize_setup, psi_to_pa
@@ -114,213 +115,6 @@ def _equalize_pair(setup: dict[str, float], keys: tuple[str, str]) -> None:
         setup[k] = _clip(k, mid)
 
 
-def _series(lap_df: pd.DataFrame, col: str, default: float = 0.0) -> pd.Series:
-    if col in lap_df.columns:
-        return lap_df[col].astype(float)
-    return pd.Series(default, index=lap_df.index, dtype=float)
-
-
-def _axle_temps(df: pd.DataFrame, mask: pd.Series | None = None) -> dict[str, float]:
-    cols = [f"tyre_temp_{i}" for i in range(4)]
-    if not all(c in df.columns for c in cols):
-        return {}
-    sl = df.loc[mask] if mask is not None and mask.any() else df
-    if sl.empty:
-        sl = df
-    rl, rr, fl, fr = [float(sl[c].mean()) for c in cols]
-    front = (fl + fr) / 2
-    rear = (rl + rr) / 2
-    return {
-        "rl": rl,
-        "rr": rr,
-        "fl": fl,
-        "fr": fr,
-        "front": front,
-        "rear": rear,
-        "spread": front - rear,
-        "avg": (front + rear) / 2,
-        "left": (rl + fl) / 2,
-        "right": (rr + fr) / 2,
-        "lr_spread": abs((rl + fl) / 2 - (rr + fr) / 2),
-    }
-
-
-def _phase_masks(lap_df: pd.DataFrame) -> dict[str, pd.Series]:
-    g = _series(lap_df, "g_lat").abs()
-    thr = _series(lap_df, "throttle")
-    brk = _series(lap_df, "brake")
-    spd = _series(lap_df, "speed")
-    g_cut = max(1.1, float(g.quantile(0.55)) * 0.55) if g.max() > 0.4 else 1.1
-    cornering = g > g_cut
-    entry = cornering & (brk > 0.12) & (thr < 0.35)
-    mid = cornering & (brk < 0.12) & (thr < 0.50)
-    exit_ = (thr > 0.45) & (brk < 0.08) & (spd < 210) & (g > 0.5)
-    braking = brk > 0.25
-    return {"entry": entry, "mid": mid, "exit": exit_, "corner": cornering, "braking": braking}
-
-
-def _steer_norm(lap_df: pd.DataFrame) -> pd.Series:
-    s = _series(lap_df, "steering").abs()
-    p98 = float(s.quantile(0.98))
-    scale = p98 if p98 > 1e-6 else 1.0
-    return (s / scale).clip(0, 1.5)
-
-
-def _efficiency(lap_df: pd.DataFrame, mask: pd.Series) -> float:
-    """Lateral G per unit steering. Low = push / understeer."""
-    if not mask.any() or "g_lat" not in lap_df.columns:
-        return float("nan")
-    g = _series(lap_df, "g_lat").abs()
-    sn = _steer_norm(lap_df)
-    val = (g / (sn + 0.18)).loc[mask]
-    val = val.replace([np.inf, -np.inf], np.nan).dropna()
-    return float(val.median()) if len(val) else float("nan")
-
-
-def _mean_mask(series: pd.Series, mask: pd.Series) -> float:
-    if not mask.any():
-        return float("nan")
-    sl = series.loc[mask].astype(float)
-    return float(sl.mean()) if len(sl) else float("nan")
-
-
-def _strength(score: float, mild: float, strong: float) -> str:
-    a = abs(score)
-    if a >= strong:
-        return "strong"
-    if a >= mild:
-        return "medium"
-    return "mild"
-
-
-def analyze_practice_balance(df: pd.DataFrame, lap: int | None = None) -> dict[str, Any]:
-    """Derive entry / mid / exit balance from a push lap."""
-    summary = build_lap_summary(df)
-    if summary.empty:
-        return {}
-    if lap is None:
-        lap = int(summary.loc[summary["is_best"], "lap"].iloc[0])
-    lap_df = get_lap(df, int(lap))
-    if lap_df.empty:
-        return {}
-
-    out: dict[str, Any] = {
-        "lap": int(lap),
-        "lap_time": float(summary.loc[summary["lap"] == lap, "lap_time"].iloc[0]),
-    }
-
-    masks = _phase_masks(lap_df)
-    temps_all = _axle_temps(lap_df)
-    temps_c = _axle_temps(lap_df, masks["corner"])
-    if temps_c:
-        out.update(
-            {
-                "temp_front": temps_c["front"],
-                "temp_rear": temps_c["rear"],
-                "temp_spread_axle": temps_c["spread"],
-                "temp_avg": temps_c["avg"],
-                "temp_lr_spread": temps_c["lr_spread"],
-            }
-        )
-    elif temps_all:
-        out["temp_front"] = temps_all["front"]
-        out["temp_rear"] = temps_all["rear"]
-        out["temp_spread_axle"] = temps_all["spread"]
-        out["temp_avg"] = temps_all["avg"]
-
-    slip = _series(lap_df, "slip_max")
-    out["entry_eff"] = _efficiency(lap_df, masks["entry"])
-    out["mid_eff"] = _efficiency(lap_df, masks["mid"])
-    out["exit_slip"] = _mean_mask(slip, masks["exit"])
-    out["entry_slip"] = _mean_mask(slip, masks["entry"])
-    out["mid_slip"] = _mean_mask(slip, masks["mid"])
-
-    if masks["braking"].any() and "lockup_risk" in lap_df.columns:
-        brk = masks["braking"]
-        out["lockup_frac"] = float(lap_df.loc[brk, "lockup_risk"].astype(float).mean())
-        out["lockups"] = int(lap_df["lockup_risk"].sum())
-        if "lockup_front" in lap_df.columns:
-            out["lockup_front_frac"] = float(lap_df.loc[brk, "lockup_front"].astype(float).mean())
-        if "lockup_rear" in lap_df.columns:
-            out["lockup_rear_frac"] = float(lap_df.loc[brk, "lockup_rear"].astype(float).mean())
-    elif "lockup_risk" in lap_df.columns:
-        out["lockups"] = int(lap_df["lockup_risk"].sum())
-        out["lockup_frac"] = 0.0
-
-    if "throttle" in lap_df.columns:
-        out["wot_pct"] = float((lap_df["throttle"] > 0.98).mean() * 100)
-    if "coasting" in lap_df.columns:
-        out["coast_pct"] = float(lap_df["coasting"].mean() * 100)
-
-    # Signed balance: + understeer, − oversteer. Blend efficiency, temps, slip.
-    # Efficiency is track-relative: compare mid vs entry, and vs this lap's corner median.
-    corner_eff = _efficiency(lap_df, masks["corner"])
-    mid_eff = out["mid_eff"]
-    entry_eff = out["entry_eff"]
-    spread = float(out.get("temp_spread_axle") or 0.0)
-    exit_slip = out.get("exit_slip")
-    entry_slip = out.get("entry_slip")
-
-    entry_score = 0.0
-    mid_score = 0.0
-    exit_score = 0.0
-
-    if np.isfinite(entry_eff) and np.isfinite(corner_eff):
-        # Lower than the lap's own corner efficiency → push on entry
-        entry_score += float(np.clip((corner_eff - entry_eff) / max(abs(corner_eff), 0.4), -1.5, 1.5))
-    if np.isfinite(mid_eff) and np.isfinite(corner_eff):
-        mid_score += float(np.clip((corner_eff - mid_eff) / max(abs(corner_eff), 0.4), -1.5, 1.5))
-
-    # Fronts hotter than rears in corners → fronts working / sliding (understeer)
-    # Rears hotter → rear limited (oversteer / traction)
-    entry_score += float(np.clip(spread / 12.0, -1.2, 1.2)) * 0.55
-    mid_score += float(np.clip(spread / 12.0, -1.2, 1.2)) * 0.70
-
-    if exit_slip is not None and np.isfinite(exit_slip):
-        # High driven slip → oversteer / traction (negative)
-        exit_score -= float(np.clip((exit_slip - 0.045) / 0.06, -0.3, 1.8))
-    if spread < -5:
-        exit_score -= float(np.clip((-spread - 5) / 10.0, 0, 1.2))
-    if entry_slip is not None and np.isfinite(entry_slip) and entry_slip > 0.07:
-        # Front lock / slide on entry often reads as understeer if fronts are hotter
-        if spread >= 0:
-            entry_score += 0.35
-        else:
-            entry_score -= 0.35
-
-    out["entry_score"] = float(entry_score)
-    out["mid_score"] = float(mid_score)
-    out["exit_score"] = float(exit_score)
-
-    # Dominant story
-    ranked = sorted(
-        (("entry", entry_score), ("mid", mid_score), ("exit", exit_score)),
-        key=lambda x: abs(x[1]),
-        reverse=True,
-    )
-    phase, score = ranked[0]
-    if abs(score) < 0.28 and abs(ranked[1][1]) < 0.28:
-        out["issue"] = "balanced"
-        out["issue_phase"] = "all"
-        out["issue_strength"] = "none"
-    else:
-        kind = "understeer" if score > 0 else "oversteer"
-        # Mixed: entry push + exit snap is common
-        if entry_score > 0.35 and exit_score < -0.35:
-            out["issue"] = "mixed"
-            out["issue_phase"] = "entry+exit"
-            out["issue_strength"] = _strength(max(abs(entry_score), abs(exit_score)), 0.45, 0.85)
-        else:
-            out["issue"] = kind
-            out["issue_phase"] = phase
-            out["issue_strength"] = _strength(score, 0.45, 0.90)
-
-    if "fuel_used" in summary.columns:
-        out["fuel_median"] = float(summary["fuel_used"].median())
-        out["fuel_best"] = float(summary.loc[summary["lap"] == lap, "fuel_used"].iloc[0])
-    return out
-
-
 def _delta_for_strength(strength: str, mild: float, medium: float, strong: float) -> float:
     return {"mild": mild, "medium": medium, "strong": strong}.get(strength, medium)
 
@@ -390,37 +184,6 @@ def _apply_mixed(setup: dict[str, float], strength: str, changes: list[SetupChan
         af = setup.get("arb_setup_0")
         if ar is not None and ar >= 8 and (af is None or abs((af or ar) - (ar - 1)) <= 3):
             _nudge(setup, "arb_setup_1", -1, "Slightly softer rear ARB for traction", changes)
-
-
-def _harmonize_mech(
-    setup: dict[str, float],
-    changes: list[SetupChange],
-    findings: list[str],
-) -> None:
-    """Clamp spring/ARB into a coherent package after coach nudges."""
-    from .track_setups import coherent_suspension
-
-    need = ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1")
-    if not all(k in setup for k in need):
-        return
-    sf0, sr0 = float(setup["susp_spring_setup_0"]), float(setup["susp_spring_setup_1"])
-    af0, ar0 = float(setup["arb_setup_0"]), float(setup["arb_setup_1"])
-    sf, sr, af, ar = coherent_suspension(sf0, sr0, af0, ar0)
-    touched = False
-    for key, old, new in (
-        ("susp_spring_setup_0", sf0, sf),
-        ("susp_spring_setup_1", sr0, sr),
-        ("arb_setup_0", af0, af),
-        ("arb_setup_1", ar0, ar),
-    ):
-        if abs(old - new) >= 0.5:
-            _apply(setup, key, new, "Harmonise suspension — keep F/R package matched", changes)
-            touched = True
-    if touched:
-        findings.append(
-            f"Suspension harmonised to springs {sf:.0f}/{sr:.0f} · ARB {af:.0f}/{ar:.0f} "
-            "(avoids front-stiff / rear-floppy snap)."
-        )
 
 
 def _tyre_thresholds(conditions: str | None) -> tuple[float, float]:
@@ -635,7 +398,12 @@ def _change_group(key: str, reason: str) -> str:
     return "other"
 
 
-def _enforce_change_budget(changes: list[SetupChange], max_groups: int = 3) -> list[SetupChange]:
+def _enforce_change_budget(
+    changes: list[SetupChange],
+    max_groups: int = 3,
+    *,
+    reserve_diff: bool = False,
+) -> list[SetupChange]:
     """
     Keep at most max_groups mechanical lever groups (+ fuel always kept).
 
@@ -653,6 +421,8 @@ def _enforce_change_budget(changes: list[SetupChange], max_groups: int = 3) -> l
         groups.setdefault(g, []).append(c)
 
     order = ["brakes", "aero", "mech", "diff", "tyres", "other"]
+    if reserve_diff and "diff" in groups:
+        order = ["brakes", "diff", "aero", "mech", "tyres", "other"]
     kept: list[SetupChange] = []
     used: set[str] = set()
 
@@ -678,68 +448,98 @@ def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> Non
             setup["front_brake_bias"] = setup[c.key]
 
 
-def _enforce_camber_meta(
-    setup: dict[str, float],
-    changes: list[SetupChange],
-    findings: list[str],
-) -> None:
-    """F1 26 meta — run max negative camber; never recommend opening camber up."""
-    labels = {"camber_setup_0": "Front camber", "camber_setup_1": "Rear camber"}
-    adjusted = False
+def _enforce_camber_meta_inplace(setup: dict[str, float]) -> None:
+    """F1 26 meta — run max negative camber on the base garage (no change rows)."""
     for key, target in CAMBER_META.items():
         if key not in setup:
             continue
         cur = float(setup[key])
-        if cur <= target + 1e-6:
-            continue
-        _apply(
-            setup,
-            key,
-            target,
-            f"{labels[key]} to meta max negative ({target:.2f}°)",
-            changes,
-        )
-        adjusted = True
-    if adjusted:
-        findings.append(
-            "Camber at F1 26 meta (F −3.50° / R −2.00°) — max negative is free grip; "
-            "balance is fixed with wing/ARB/pressures instead."
-        )
+        if cur > target + 1e-6:
+            setup[key] = _clip(key, target)
 
 
-def _guard_track_wings(
+def _harmonize_mech_inplace(setup: dict[str, float]) -> bool:
+    """Clamp spring/ARB into a coherent package without adding change rows."""
+    from .track_setups import coherent_suspension
+
+    need = ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1")
+    if not all(k in setup for k in need):
+        return False
+    sf0, sr0 = float(setup["susp_spring_setup_0"]), float(setup["susp_spring_setup_1"])
+    af0, ar0 = float(setup["arb_setup_0"]), float(setup["arb_setup_1"])
+    sf, sr, af, ar = coherent_suspension(sf0, sr0, af0, ar0)
+    touched = False
+    for key, old, new in (
+        ("susp_spring_setup_0", sf0, sf),
+        ("susp_spring_setup_1", sr0, sr),
+        ("arb_setup_0", af0, af),
+        ("arb_setup_1", ar0, ar),
+    ):
+        if abs(old - new) >= 0.5:
+            setup[key] = _clip(key, new)
+            touched = True
+    return touched
+
+
+def _clamp_brake_stability_inplace(
+    setup: dict[str, float],
+    *,
+    conditions: str | None = None,
+) -> bool:
+    """Hard safety band in-place — no new SetupChange rows."""
+    from .conditions import is_wet_surface
+
+    wet = is_wet_surface(conditions)
+    lo, hi = (0.53, 0.62) if wet else (0.55, 0.62)
+    touched = False
+    bias_key = "brake_bias_setup" if "brake_bias_setup" in setup else None
+    if bias_key:
+        cur = float(setup[bias_key])
+        clipped = float(np.clip(cur, lo, hi))
+        if abs(clipped - cur) > 1e-6:
+            setup[bias_key] = clipped
+            touched = True
+        if "front_brake_bias" in setup:
+            setup["front_brake_bias"] = setup[bias_key]
+
+    if "brake_press_setup" in setup:
+        press = float(setup["brake_press_setup"])
+        max_press = 0.97 if wet else 0.98
+        if press > max_press:
+            setup["brake_press_setup"] = max_press
+            touched = True
+    return touched
+
+
+def _guard_track_wings_inplace(
     setup: dict[str, float],
     typical: dict[str, Any] | None,
-    changes: list[SetupChange],
-    findings: list[str],
-) -> None:
-    """Never ship zero/min wings on high-DF circuits (Monaco, etc.)."""
+    symptoms: dict[str, Any],
+) -> bool:
+    """Raise very low wings on high-DF tracks only when understeer is the session story."""
     if not typical:
-        return
+        return False
     char = str(typical.get("character") or "")
     if char not in ("high_df", "medium_high"):
-        return
+        return False
+    issue = str(symptoms.get("issue") or "balanced")
+    if issue not in ("understeer", "mixed"):
+        return False
+
     ts = typical.get("setup") or {}
-    floors = {
-        "wing_setup_0": max(0.0, float(ts.get("wing_setup_0", 40)) - 8),
-        "wing_setup_1": max(0.0, float(ts.get("wing_setup_1", 40)) - 8),
-    }
-    for key, floor in floors.items():
+    touched = False
+    for key in ("wing_setup_0", "wing_setup_1"):
         if key not in setup:
             continue
         cur = float(setup[key])
-        if cur >= floor:
+        typical_w = float(ts.get(key, 40))
+        if cur >= typical_w - 8:
             continue
-        _apply(
-            setup,
-            key,
-            floor,
-            f"Floor {key.replace('_setup', '').replace('_', ' ')} for {typical.get('track', 'this track')} high-DF pack",
-            changes,
-        )
-        findings.append(
-            f"Wing read as {cur:.0f} in export — raised to {floor:.0f} for a high-downforce track."
-        )
+        floor = max(0.0, typical_w - 8)
+        if cur < floor:
+            setup[key] = _clip(key, floor)
+            touched = True
+    return touched
 
 
 def build_setup_from_practice(
@@ -811,12 +611,24 @@ def build_setup_from_practice(
         if not is_wet_surface(state):
             setup.setdefault(k, v)
 
+    _enforce_camber_meta_inplace(setup)
+
     changes: list[SetupChange] = []
     lap_diag = diagnosis
-    symptoms = analyze_practice_balance(df, lap=lap)
-    if lap_diag is not None and lap_diag.symptoms:
+    if lap_diag is not None and lap_diag.evidence.get("scope") == "session":
+        symptoms = dict(lap_diag.symptoms or {})
+        if not symptoms and lap_diag.evidence.get("best_lap") is not None:
+            symptoms = analyze_practice_balance(df, lap=int(lap_diag.evidence["best_lap"])) or {}
+        symptoms["issue"] = lap_diag.primary_issue
+        symptoms["issue_phase"] = lap_diag.phase
+        symptoms["issue_strength"] = lap_diag.strength
+        if lap_diag.evidence.get("best_lap") is not None:
+            symptoms["lap"] = int(lap_diag.evidence["best_lap"])
+    elif lap_diag is not None and lap_diag.symptoms:
         symptoms = lap_diag.symptoms
-    elif lap_diag is None and symptoms:
+    else:
+        symptoms = analyze_practice_balance(df, lap=lap) or {}
+    if lap_diag is None and symptoms:
         from .diagnosis import build_lap_diagnosis
 
         lap_diag = build_lap_diagnosis(
@@ -878,8 +690,9 @@ def build_setup_from_practice(
     elif variant == "quali":
         _apply(setup, "fuel_setup", 5.0, "Quali fuel — garage minimum (5 kg)", changes)
 
+    reserve_diff = issue == "oversteer" and phase in ("exit", "all", "entry+exit")
     pre_n = len([c for c in changes if c.key != "fuel_setup"])
-    changes = _enforce_change_budget(changes, max_groups=3)
+    changes = _enforce_change_budget(changes, max_groups=3, reserve_diff=reserve_diff)
     post_n = len([c for c in changes if c.key != "fuel_setup"])
     if post_n < pre_n:
         setup = deepcopy(setup_before_changes)
@@ -888,11 +701,19 @@ def build_setup_from_practice(
             f"Kept {post_n} coordinated garage move(s) — brakes first, then one aero/mech lever, then diff/tyres."
         )
 
-    # Final safety net after budget trim
-    _harmonize_mech(setup, changes, findings)
-    _clamp_brake_stability(setup, changes, findings, conditions=state)
-    _guard_track_wings(setup, typical, changes, findings)
-    _enforce_camber_meta(setup, changes, findings)
+    if _harmonize_mech_inplace(setup):
+        findings.append("Suspension harmonised in-place — F/R package kept matched.")
+    if _clamp_brake_stability_inplace(setup, conditions=state):
+        findings.append("Brake bias/pressure clamped to a safe in-game band.")
+    if _guard_track_wings_inplace(setup, typical, symptoms):
+        findings.append(
+            "Wings raised toward the high-DF track floor — only because session balance shows understeer with very low wing."
+        )
+    _enforce_camber_meta_inplace(setup)
+
+    for ch in changes:
+        if ch.key in setup:
+            ch.after = float(setup[ch.key])
 
     if "brake_bias_setup" in setup and "front_brake_bias" in setup:
         setup["front_brake_bias"] = setup["brake_bias_setup"]

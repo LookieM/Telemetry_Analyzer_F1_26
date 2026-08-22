@@ -70,7 +70,7 @@ def build_lap_diagnosis(
     track_length: float | None = None,
 ) -> LapDiagnosis:
     """One diagnosis object for coach feed and setup builder."""
-    from .setup_builder import analyze_practice_balance
+    from .balance import analyze_practice_balance
 
     state = _as_state(conditions)
     summary = build_lap_summary(df, track_length=track_length)
@@ -262,7 +262,7 @@ def build_session_diagnosis(
     track_length: float | None = None,
 ) -> LapDiagnosis:
     """Session-wide diagnosis: trends and recurring issues vs the PB lap."""
-    from .setup_builder import analyze_practice_balance
+    from .balance import analyze_practice_balance
 
     state = _as_state(conditions)
     summary = build_lap_summary(df, track_length=track_length)
@@ -284,41 +284,50 @@ def build_session_diagnosis(
         sample_laps.append(best_lap)
 
     issue_counts: Counter[str] = Counter()
-    phase_counts: Counter[str] = Counter()
+    lap_balances: list[tuple[int, dict[str, Any]]] = []
     strength_rank = {"none": 0, "mild": 1, "medium": 2, "strong": 3}
-    strength_max = "none"
     for lap_n in sample_laps:
         bal = analyze_practice_balance(df, lap=lap_n) or {}
+        lap_balances.append((lap_n, bal))
         issue = str(bal.get("issue") or "balanced")
         if issue == "balanced":
             continue
         issue_counts[issue] += 1
-        phase_counts[str(bal.get("issue_phase") or "all")] += 1
-        s = str(bal.get("issue_strength") or "mild")
-        if strength_rank.get(s, 0) > strength_rank.get(strength_max, 0):
-            strength_max = s
 
     if issue_counts:
         primary_issue = issue_counts.most_common(1)[0][0]
-        phase = phase_counts.most_common(1)[0][0]
         vote_n = issue_counts[primary_issue]
+        matching = [
+            bal
+            for _, bal in lap_balances
+            if str(bal.get("issue") or "balanced") == primary_issue
+        ]
+        phase_counts = Counter(str(b.get("issue_phase") or "all") for b in matching)
+        phase = phase_counts.most_common(1)[0][0] if phase_counts else "all"
+        strength_max = "none"
+        for b in matching:
+            s = str(b.get("issue_strength") or "mild")
+            if strength_rank.get(s, 0) > strength_rank.get(strength_max, 0):
+                strength_max = s
         strength = strength_max if vote_n >= max(2, len(sample_laps) // 4) else "mild"
     else:
         primary_issue, phase, strength = "balanced", "all", "none"
 
-    recurring = _session_recurring_corners(
-        df,
-        track=track,
-        track_length=track_length,
-        best_lap=best_lap,
-        sample_laps=sample_laps,
-    )
+    recurring: list[tuple[str, float, int]] = []
+    if len(sample_laps) >= 3:
+        recurring = _session_recurring_corners(
+            df,
+            track=track,
+            track_length=track_length,
+            best_lap=best_lap,
+            sample_laps=sample_laps,
+        )
     worst_corner = recurring[0][0] if recurring else None
     worst_loss = recurring[0][1] if recurring else 0.0
 
     ordered = summary.sort_values("lap")
     pace_trend = "stable"
-    if len(ordered) >= 6:
+    if len(sample_laps) >= 3 and len(ordered) >= 6:
         third = max(1, len(ordered) // 3)
         early = float(ordered.head(third)["lap_time"].mean())
         late = float(ordered.tail(third)["lap_time"].mean())

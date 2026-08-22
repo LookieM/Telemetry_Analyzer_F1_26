@@ -88,7 +88,7 @@ from telemetry.session_compare import (
 )
 from telemetry.setup_builder import build_setup_from_practice, changes_frame
 from telemetry.coach import CoachItem, coach_feed_for_session, setup_summary_item
-from telemetry.diagnosis import build_lap_diagnosis
+from telemetry.diagnosis import build_session_diagnosis
 from telemetry.setup_history import backfill_setup_fingerprints, setup_timeline
 from telemetry.setup_tweaker import normalize_setup, pa_to_psi
 from telemetry.ers_2026_ui import render_2026_channels_panel, render_stint_windows_panel
@@ -289,7 +289,7 @@ def render_coach_feed(headline: str, top: list[CoachItem], rest: list[CoachItem]
     """Ranked session engineer feed with headline + domain expanders."""
     st.markdown(f"**Session read:** {headline}")
     if not top and not rest:
-        st.info("No callouts for this lap yet — import more channels or pick a reference lap.")
+        st.info("No session callouts yet — need more probable laps or richer telemetry channels.")
         return
 
     kind_css = {
@@ -877,6 +877,7 @@ def render_dossier() -> None:
 
 
 def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outline: dict | None) -> None:
+    sid = int(session["id"])
     best_lap = int(summary.loc[summary["is_best"], "lap"].iloc[0])
     laps = summary["lap"].tolist()
     track = normalize_track_name(session.get("track"))
@@ -897,13 +898,19 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             index=laps.index(best_lap),
             format_func=lambda L: f"Lap {L} — {format_lap_time(float(summary.loc[summary.lap == L, 'lap_time'].iloc[0]))}"
             + (" ★" if L == best_lap else ""),
+            key=f"focus_lap_{sid}",
         )
         ref_lap = st.selectbox(
             "Reference lap",
             laps,
             index=laps.index(best_lap),
             format_func=lambda L: f"Lap {L} — {format_lap_time(float(summary.loc[summary.lap == L, 'lap_time'].iloc[0]))}",
+            key=f"ref_lap_{sid}",
         )
+        prev_focus_key = f"coach_focus_lap_{sid}"
+        if prev_focus_key in st.session_state and st.session_state[prev_focus_key] != focus_lap:
+            st.session_state.pop(f"setup_coach_item_{sid}", None)
+        st.session_state[prev_focus_key] = focus_lap
         map_color = st.selectbox("Map colour", ["speed", "throttle", "brake", "delta"], index=0)
 
         st.markdown("---")
@@ -1333,11 +1340,11 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                     st.dataframe(disp, use_container_width=True, hide_index=True)
                     st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
 
-        sid = int(session["id"])
         ui_id = f"sess_{sid}"
-        state_key = f"setup_proposed_{sid}"
+        state_key = f"setup_proposed_{sid}_{focus_lap}"
 
         st.subheader("Setup builder")
+        st.caption("Garage suggestions use the **session read** (all probable laps vs PB); focus lap selects which garage snapshot to start from.")
         sess_wx = parse_track_state(session.get("conditions"))
         b1, b2, b3, b4 = st.columns([1.2, 0.9, 1, 1])
         with b1:
@@ -1416,12 +1423,9 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             st.caption("Session garage base: imported setup snapshot (re-import CSV to refresh from telemetry).")
 
         if build_clicked:
-            setup_ref = ref_lap if ref_lap != focus_lap else best_lap
-            lap_diag = build_lap_diagnosis(
+            session_diag = build_session_diagnosis(
                 df,
-                focus_lap,
-                ref_lap=setup_ref,
-                corner_cmp=corner_cmp if focus_lap != ref_lap else None,
+                best_lap=best_lap,
                 conditions=setup_conditions,
                 track=setup_track or track,
                 track_length=track_length,
@@ -1434,11 +1438,11 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 lap=focus_lap,
                 prefer_typical_base=False,
                 conditions=setup_conditions,
-                diagnosis=lap_diag,
+                diagnosis=session_diag,
                 corner_cmp=corner_cmp,
             )
             st.session_state[f"setup_coach_item_{sid}"] = setup_summary_item(
-                lap_diag, built.changes, built.findings
+                session_diag, built.changes, built.findings
             )
             apply_setup_to_state(state_key, ui_id, built.setup)
             notes = list(built.findings)

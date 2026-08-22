@@ -64,10 +64,38 @@ def scrub_improbable_lap_records(app_root: Path | None = None) -> dict[str, int]
     """
     Remove takeback / red-flag short laps from PB history and fix session bests.
 
-    Uses the same absolute time window as build_lap_summary (not distance —
-    stored lap rows no longer have telemetry).
+    Uses is_probable_lap (time + samples + distance) when telemetry is available;
+    falls back to absolute time bounds for stored lap rows without telemetry.
     """
+    from .db import load_session_telemetry
+
     ensure_progress_schema(app_root)
+    telemetry_laps_removed = 0
+    with connect(app_root) as conn:
+        sessions = conn.execute("SELECT id, track_length FROM sessions").fetchall()
+        for row in sessions:
+            sid = int(row["id"])
+            try:
+                df = load_session_telemetry(sid, app_root)
+            except Exception:
+                continue
+            if df is None or df.empty or "lap" not in df.columns:
+                continue
+            length = row["track_length"]
+            if length is not None:
+                length = float(length)
+            summary = build_lap_summary(df, track_length=length)
+            probable = set(int(x) for x in summary["lap"].tolist()) if not summary.empty else set()
+            if not probable:
+                removed = conn.execute("DELETE FROM laps WHERE session_id = ?", (sid,)).rowcount
+                telemetry_laps_removed += int(removed or 0)
+                continue
+            removed = conn.execute(
+                f"DELETE FROM laps WHERE session_id = ? AND lap NOT IN ({','.join('?' * len(probable))})",
+                (sid, *sorted(probable)),
+            ).rowcount
+            telemetry_laps_removed += int(removed or 0)
+
     with connect(app_root) as conn:
         pb_removed = conn.execute(
             "DELETE FROM personal_bests WHERE lap_time < ? OR lap_time > ?",
@@ -127,6 +155,7 @@ def scrub_improbable_lap_records(app_root: Path | None = None) -> dict[str, int]
         "pb_removed": int(pb_removed or 0),
         "sessions_fixed": int(sessions_fixed),
         "laps_removed": int(laps_removed or 0),
+        "telemetry_laps_removed": int(telemetry_laps_removed),
     }
 
 

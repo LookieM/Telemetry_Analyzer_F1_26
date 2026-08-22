@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .coach_constants import LOCKUP_BRAKE_THRESHOLD
 from .metrics import build_lap_summary, get_lap
 
 
@@ -135,8 +136,13 @@ def stint_saving_insights(
     ref = table[table["lap"] == ref_lap].iloc[0] if (table["lap"] == ref_lap).any() else best
 
     wet = is_wet_surface(state)
-    hot_lim = 88 if state == "wet" else (95 if wet else 95)
-    cold_lim = 42 if state == "wet" else (55 if wet else 70)
+    hot_lim = 88 if state == "wet" else 95
+    if state == "wet":
+        cold_lim = 42
+    elif wet:
+        cold_lim = 55
+    else:
+        cold_lim = 70
 
     # Fuel
     if pd.notna(focus.get("fuel_used")) and pd.notna(table["fuel_used"].median()):
@@ -277,7 +283,7 @@ def stint_saving_insights(
                 "tyre",
             )
         )
-    if focus.get("lockup_samples", 0) > 20:
+    if focus.get("lockup_samples", 0) > LOCKUP_BRAKE_THRESHOLD:
         tips.append(
             StintTip(
                 "warning",
@@ -419,7 +425,7 @@ def session_stint_insights(
                     )
                 )
 
-    lock_laps = int((table["lockup_samples"] > 18).sum()) if "lockup_samples" in table.columns else 0
+    lock_laps = int((table["lockup_samples"] > LOCKUP_BRAKE_THRESHOLD).sum()) if "lockup_samples" in table.columns else 0
     if lock_laps >= max(2, n // 3):
         tips.append(
             StintTip(
@@ -455,20 +461,3 @@ def session_stint_insights(
 
     return tips
 
-
-def append_window_insights(
-    tips: list[StintTip],
-    df: pd.DataFrame,
-    target_laps: int | None = None,
-    race_distance_m: float | None = None,
-    track_length_m: float | None = None,
-) -> list[StintTip]:
-    """Attach fuel/tyre window projections after per-lap saving tips."""
-    from .race_windows import stint_window_insights
-
-    return list(tips) + stint_window_insights(
-        df,
-        target_laps=target_laps,
-        race_distance_m=race_distance_m,
-        track_length_m=track_length_m,
-    )

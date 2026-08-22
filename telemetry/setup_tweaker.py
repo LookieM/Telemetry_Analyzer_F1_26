@@ -299,18 +299,42 @@ def _param_map() -> dict[str, SetupParam]:
 def _coerce_setup_units(raw: dict[str, Any]) -> dict[str, Any]:
     """Map SRT fractional exports (0–1) to in-game garage units where needed."""
     out = dict(raw)
+    pmap = _param_map()
     fw, rw = out.get("wing_setup_0"), out.get("wing_setup_1")
     try:
         fw_f = float(fw) if fw is not None else None
         rw_f = float(rw) if rw is not None else None
     except (TypeError, ValueError):
-        return out
+        fw_f = rw_f = None
     if fw_f is not None and rw_f is not None:
         mx = max(abs(fw_f), abs(rw_f))
         # Some exports store max wing as 1.0 instead of 50 clicks
         if 0 < mx <= 1.05:
             out["wing_setup_0"] = fw_f * 50.0
             out["wing_setup_1"] = rw_f * 50.0
+
+    percent_keys = (
+        "brake_bias_setup",
+        "front_brake_bias",
+        "brake_press_setup",
+        "diff_onThrottle_setup",
+        "diff_offThrottle_setup",
+    )
+    for key in percent_keys:
+        if key not in out or out[key] is None:
+            continue
+        try:
+            val = float(out[key])
+        except (TypeError, ValueError):
+            continue
+        p = pmap.get(key.replace("front_brake_bias", "brake_bias_setup"))
+        if p is None and key == "front_brake_bias":
+            p = pmap.get("brake_bias_setup")
+        if p is None:
+            continue
+        # Exports often store 57 / 65 / 95 instead of 0.57 / 0.65 / 0.95
+        if val > p.max_v + 1e-6 and val <= p.max_v * p.display_scale + 1e-6:
+            out[key] = val / p.display_scale
     return out
 
 
