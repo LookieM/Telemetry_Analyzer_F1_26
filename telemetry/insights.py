@@ -356,7 +356,8 @@ def generate_insights(
                 Insight(
                     "tip",
                     "Tyre temp imbalance",
-                    f"{hottest} is much hotter than {coldest}. Check camber/pressure/toe or driving style (one-sided load).",
+                    f"{hottest} is much hotter than {coldest}. Check pressures/toe or driving style (one-sided load); "
+                    "keep camber at meta max negative (−3.50° F / −2.00° R).",
                     "tyres",
                 )
             )

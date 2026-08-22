@@ -96,7 +96,7 @@ SETUP_PARAMS: list[SetupParam] = [
         -2.50,
         0.01,
         0.05,
-        "More negative → better mid-corner grip, more inner-shoulder wear. Range −3.50 to −2.50°.",
+        "More negative → better mid-corner grip (F1 26 meta: run −3.50°). Range −3.50 to −2.50°.",
     ),
     SetupParam(
         "camber_setup_1",
@@ -107,7 +107,7 @@ SETUP_PARAMS: list[SetupParam] = [
         -1.00,
         0.01,
         0.04,
-        "More negative → rear grip; too much → traction loss. Range −2.00 to −1.00°.",
+        "More negative → rear grip (F1 26 meta: run −2.00°). Range −2.00 to −1.00°.",
     ),
     SetupParam(
         "toe_setup_0",
@@ -414,8 +414,11 @@ def estimate_setup_delta(
                 est = (abs(v - opt) - abs(b - opt)) * 0.35 + du * 0.01
             group = "brakes"
         elif p.group == "Geometry":
-            # Mild penalty away from aggressive (more negative) camber / small toe
-            est = du * p.dt_per_unit * 0.15
+            if key.startswith("camber"):
+                opt = p.min_v  # meta = most negative allowed
+                est = 0.006 * ((float(v) - opt) ** 2 - (float(b) - opt) ** 2)
+            else:
+                est = du * p.dt_per_unit * 0.15
             group = "geometry"
         else:
             est = du * p.dt_per_unit

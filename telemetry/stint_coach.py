@@ -213,7 +213,8 @@ def stint_saving_insights(
                     "warning",
                     "Tyre temp imbalance",
                     f"{temps['hottest']} is overloaded vs {temps['coldest']}. "
-                    "Ease entry on that side, check pressures/camber, or soften that-axle ARB one click.",
+                    "Ease entry on that side, check pressures/toe, or soften that-axle ARB one click "
+                    "(camber stays at meta max negative).",
                     "tyre",
                 )
             )
@@ -336,6 +337,122 @@ def stint_saving_insights(
             "technique",
         )
     )
+    return tips
+
+
+def session_stint_insights(
+    df: pd.DataFrame,
+    *,
+    best_lap: int | None = None,
+    conditions: str | None = None,
+) -> list[StintTip]:
+    """Stint-wide fuel/tyre/technique patterns — not a single lap."""
+    from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
+
+    tips: list[StintTip] = []
+    state = _as_state(conditions)
+    banner = weather_banner(state)
+    if banner:
+        tips.append(StintTip("info", f"Track state: {STATE_LABELS[state]}", banner, "weather"))
+
+    table = session_stint_table(df)
+    if table.empty:
+        return tips + [StintTip("warning", "No stint data", "Need fuel/tyre channels in the session.", "tyre")]
+
+    if best_lap is None:
+        best_lap = int(table.loc[table["is_best"], "lap"].iloc[0])
+    best = table.loc[table["lap"] == best_lap].iloc[0] if (table["lap"] == best_lap).any() else table.loc[table["is_best"]].iloc[0]
+
+    n = len(table)
+    med_fuel = float(table["fuel_used"].median()) if table["fuel_used"].notna().any() else None
+    med_coast = float(table["coast_pct"].median()) if table["coast_pct"].notna().any() else None
+    spread = float(table["lap_time"].max() - table["lap_time"].min())
+
+    if spread >= 0.9 and n >= 4:
+        tips.append(
+            StintTip(
+                "tip",
+                "Pace inconsistency",
+                f"Lap times spread {spread:.2f}s across {n} laps — pick one reference line (PB L{int(best['lap'])}) "
+                "and repeat it instead of chasing one-off hero laps.",
+                "technique",
+            )
+        )
+
+    if med_fuel is not None:
+        heavy = table[(table["fuel_used"] > med_fuel * 1.12) & (table["lap_time"] > best["lap_time"] + 0.35)]
+        if len(heavy) >= max(2, n // 3):
+            tips.append(
+                StintTip(
+                    "tip",
+                    "Fuel burn without pace",
+                    f"{len(heavy)}/{n} laps used more fuel than median without matching PB pace. "
+                    "Shorten full-throttle time and add brief lift-coast before big stops.",
+                    "fuel",
+                )
+            )
+
+    if med_coast is not None and med_coast < 4 and med_fuel is not None and table["fuel_used"].median() > best["fuel_used"]:
+        tips.append(
+            StintTip(
+                "tip",
+                "Session lift-coast headroom",
+                f"Median coasting is only {med_coast:.1f}% while fuel use sits above your PB lap. "
+                "A little lift-and-coast before heavy braking saves fuel with minimal lap-time cost.",
+                "fuel",
+            )
+        )
+
+    if "wear_delta_pct" in table.columns and table["wear_delta_pct"].notna().sum() >= 4:
+        wear = table.dropna(subset=["wear_delta_pct"]).sort_values("lap")
+        if len(wear) >= 4:
+            first = float(wear.head(2)["wear_delta_pct"].mean())
+            last = float(wear.tail(2)["wear_delta_pct"].mean())
+            if last > first * 1.35 and last > 0.15:
+                tips.append(
+                    StintTip(
+                        "warning",
+                        "Tyre deg ramping",
+                        f"Wear per lap is rising ({first:.2f}% → {last:.2f}% avg). "
+                        "Calm mid-corner slides and avoid repeated lockups — deg often beats raw pace in race sims.",
+                        "tyre",
+                    )
+                )
+
+    lock_laps = int((table["lockup_samples"] > 18).sum()) if "lockup_samples" in table.columns else 0
+    if lock_laps >= max(2, n // 3):
+        tips.append(
+            StintTip(
+                "warning",
+                "Lockups across the stint",
+                f"Heavy lockups on {lock_laps}/{n} laps — move brake markers out session-wide or ease initial pressure.",
+                "technique",
+            )
+        )
+
+    if n >= 3 and "stint_score" in table.columns:
+        eff = table.sort_values("stint_score", ascending=False).iloc[0]
+        tips.append(
+            StintTip(
+                "tip",
+                "Best race-sim reference lap",
+                f"L{int(eff['lap'])} balances pace vs cost best ({eff['lap_time']:.3f}s, fuel {eff['fuel_used']:.2f}). "
+                "Copy its inputs for long-run targets.",
+                "technique",
+            )
+        )
+
+    if is_wet_surface(state):
+        tips.append(
+            StintTip(
+                "tip",
+                "Wet stint discipline",
+                "Session average: brake earlier, straighter, and feed throttle later. "
+                "Consistency beats single-lap heroics on low grip.",
+                "technique",
+            )
+        )
+
     return tips
 
 

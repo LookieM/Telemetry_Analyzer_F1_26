@@ -286,8 +286,8 @@ def format_bytes(n: int | float | None) -> str:
 
 
 def render_coach_feed(headline: str, top: list[CoachItem], rest: list[CoachItem]) -> None:
-    """Ranked engineer feed with headline + domain expanders."""
-    st.markdown(f"**Engineer read:** {headline}")
+    """Ranked session engineer feed with headline + domain expanders."""
+    st.markdown(f"**Session read:** {headline}")
     if not top and not rest:
         st.info("No callouts for this lap yet — import more channels or pick a reference lap.")
         return
@@ -1529,22 +1529,6 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         )
 
     with tab_coach:
-        lap_rows = get_session_laps(int(session["id"]), APP_ROOT)
-        stored = None
-        prefer_live = True
-        if not lap_rows.empty and ref_lap == best_lap:
-            hit = lap_rows.loc[lap_rows["lap"] == focus_lap]
-            if not hit.empty and hit.iloc[0].get("insights_json"):
-                try:
-                    stored = json.loads(hit.iloc[0]["insights_json"])
-                except json.JSONDecodeError:
-                    stored = None
-            # Recompute if session conditions were edited after import
-            if session.get("conditions"):
-                prefer_live = True
-            elif stored:
-                prefer_live = False
-
         extra_setup: list[CoachItem] = []
         setup_item = st.session_state.get(f"setup_coach_item_{sid}")
         if setup_item is not None:
@@ -1552,21 +1536,17 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         diag, top_items, rest_items = coach_feed_for_session(
             df,
-            focus_lap,
-            ref_lap=ref_lap if ref_lap != focus_lap else best_lap,
-            corner_cmp=corner_cmp if focus_lap != ref_lap else None,
             track=track,
             track_length=track_length,
             conditions=session.get("conditions"),
-            stored_insights=stored,
-            prefer_live=prefer_live,
             extra_items=extra_setup or None,
+            best_lap=best_lap,
         )
         render_coach_feed(diag.headline, top_items, rest_items)
 
         st.caption(
-            "Deep charts live on Corners, ERS / 2026, and Setup / Stint tabs. "
-            "This feed ranks the highest-impact items only."
+            "Session-level engineer feed from all probable laps (PB as reference). "
+            "Lap selector still drives Corners, Compare, and Setup tabs."
         )
 
 

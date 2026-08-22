@@ -36,6 +36,12 @@ TYRE_COLD_WET = 42.0
 TYRE_HOT_INTER = 95.0
 TYRE_COLD_INTER = 55.0
 
+# F1 26 meta: maximum negative camber (min allowed in garage UI)
+CAMBER_META = {
+    "camber_setup_0": -3.50,  # front −3.50° … −2.50°
+    "camber_setup_1": -2.00,  # rear −2.00° … −1.00°
+}
+
 
 @dataclass
 class SetupChange:
@@ -337,8 +343,6 @@ def _apply_understeer(setup: dict[str, float], phase: str, strength: str, change
         # Soften front ARB only if it stays within 3 of rear (don't create split packages)
         if af is not None and (ar is None or af - 1 >= (ar or af) - 3):
             _nudge(setup, "arb_setup_0", -arb, "Softer front ARB for mid-corner rotation", changes)
-        if strength != "mild":
-            _nudge(setup, "camber_setup_0", -0.05, "More negative front camber for mid-corner grip", changes)
     if strength == "strong" and phase == "mid":
         _nudge_pair(setup, FRONT_RH, -1, "Lower front ride height for more front aero", changes)
 
@@ -359,8 +363,6 @@ def _apply_oversteer(setup: dict[str, float], phase: str, strength: str, changes
         # Only ease rear spring if it's already on the firm side — never toward 3–8
         if strength != "mild" and sr is not None and sr >= 16:
             _nudge(setup, "susp_spring_setup_1", -1, "Slightly softer rear spring for exit grip", changes)
-        if strength != "mild":
-            _nudge(setup, "camber_setup_1", 0.05, "Less rear camber to help traction", changes)
     if phase in ("mid", "entry", "all"):
         _nudge(setup, "wing_setup_1", w, "More rear wing for stability", changes)
         if phase == "entry":
@@ -626,7 +628,9 @@ def _change_group(key: str, reason: str) -> str:
         return "tyres"
     if key.startswith("diff"):
         return "diff"
-    if key.startswith(("arb", "susp_", "camber", "toe")):
+    if key.startswith("camber"):
+        return "camber"
+    if key.startswith(("arb", "susp_", "toe")):
         return "mech"
     return "other"
 
@@ -638,7 +642,8 @@ def _enforce_change_budget(changes: list[SetupChange], max_groups: int = 3) -> l
     Order: brakes → aero OR mech (not both) → diff OR tyres.
     """
     fuel = [c for c in changes if c.key == "fuel_setup"]
-    mech = [c for c in changes if c.key != "fuel_setup"]
+    camber = [c for c in changes if c.key.startswith("camber")]
+    mech = [c for c in changes if c.key != "fuel_setup" and not c.key.startswith("camber")]
     if not mech:
         return fuel
 
@@ -663,7 +668,7 @@ def _enforce_change_budget(changes: list[SetupChange], max_groups: int = 3) -> l
         used.add(g)
         kept.extend(groups[g])
 
-    return fuel + kept
+    return fuel + camber + kept
 
 
 def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> None:
@@ -671,6 +676,35 @@ def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> Non
         setup[c.key] = _clip(c.key, c.after)
         if c.key == "brake_bias_setup" and "front_brake_bias" in setup:
             setup["front_brake_bias"] = setup[c.key]
+
+
+def _enforce_camber_meta(
+    setup: dict[str, float],
+    changes: list[SetupChange],
+    findings: list[str],
+) -> None:
+    """F1 26 meta — run max negative camber; never recommend opening camber up."""
+    labels = {"camber_setup_0": "Front camber", "camber_setup_1": "Rear camber"}
+    adjusted = False
+    for key, target in CAMBER_META.items():
+        if key not in setup:
+            continue
+        cur = float(setup[key])
+        if cur <= target + 1e-6:
+            continue
+        _apply(
+            setup,
+            key,
+            target,
+            f"{labels[key]} to meta max negative ({target:.2f}°)",
+            changes,
+        )
+        adjusted = True
+    if adjusted:
+        findings.append(
+            "Camber at F1 26 meta (F −3.50° / R −2.00°) — max negative is free grip; "
+            "balance is fixed with wing/ARB/pressures instead."
+        )
 
 
 def _guard_track_wings(
@@ -858,6 +892,7 @@ def build_setup_from_practice(
     _harmonize_mech(setup, changes, findings)
     _clamp_brake_stability(setup, changes, findings, conditions=state)
     _guard_track_wings(setup, typical, changes, findings)
+    _enforce_camber_meta(setup, changes, findings)
 
     if "brake_bias_setup" in setup and "front_brake_bias" in setup:
         setup["front_brake_bias"] = setup["brake_bias_setup"]

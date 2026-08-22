@@ -185,6 +185,15 @@ def _diagnosis_items(diag: LapDiagnosis) -> list[CoachItem]:
             )
         )
     if diag.worst_corner_loss_s >= 0.03 and diag.worst_corner:
+        rc = diag.evidence.get("recurring_corners") or []
+        lap_n = rc[0][2] if rc and rc[0][0] == diag.worst_corner else None
+        if lap_n is not None and diag.evidence.get("scope") == "session":
+            detail = (
+                f"Avg +{diag.worst_corner_loss_s:.3f}s vs PB on {lap_n} laps — "
+                "this is your highest-impact sector to fix session-wide."
+            )
+        else:
+            detail = f"Largest time loss vs reference (+{diag.worst_corner_loss_s:.3f}s). Fix here first."
         items.append(
             _item(
                 id="diagnosis:worst_corner",
@@ -195,7 +204,7 @@ def _diagnosis_items(diag: LapDiagnosis) -> list[CoachItem]:
                 priority=35.0 + diag.worst_corner_loss_s * 100.0,
                 confidence=diag.confidence,
                 title=f"Priority corner: {diag.worst_corner}",
-                detail=f"Largest time loss vs reference (+{diag.worst_corner_loss_s:.3f}s). Fix here first.",
+                detail=detail,
                 related_keys=[f"corner:{diag.worst_corner}", "technique"],
             )
         )
@@ -203,6 +212,17 @@ def _diagnosis_items(diag: LapDiagnosis) -> list[CoachItem]:
         drive_first = (
             "Try driving fixes (markers, throttle) on the next push before changing the garage."
         )
+        votes = diag.evidence.get("issue_votes") or {}
+        vote_n = sum(int(v) for v in votes.values())
+        if diag.evidence.get("scope") == "session" and vote_n >= 2:
+            balance_detail = (
+                f"{diag.strength.capitalize()} {diag.primary_issue} in {diag.phase} "
+                f"showed up on {vote_n} laps this session. {drive_first}"
+            )
+        else:
+            balance_detail = (
+                f"{diag.strength.capitalize()} {diag.primary_issue} in {diag.phase}. {drive_first}"
+            )
         items.append(
             _item(
                 id="diagnosis:balance",
@@ -213,12 +233,172 @@ def _diagnosis_items(diag: LapDiagnosis) -> list[CoachItem]:
                 priority=32.0,
                 confidence=diag.confidence,
                 title=f"Balance: {diag.primary_issue} ({diag.phase})",
-                detail=(
-                    f"{diag.strength.capitalize()} {diag.primary_issue} in {diag.phase}. {drive_first}"
-                ),
+                detail=balance_detail,
                 related_keys=["balance", diag.primary_issue],
             )
         )
+    return items
+
+
+def _session_recurring_corner_items(diag: LapDiagnosis) -> list[CoachItem]:
+    items: list[CoachItem] = []
+    rc = diag.evidence.get("recurring_corners") or []
+    conf = diag.confidence
+    for name, avg_loss, lap_n in rc[:3]:
+        if avg_loss < 0.025:
+            continue
+        # Skip duplicate of priority corner item
+        if name == diag.worst_corner and len(rc) == 1:
+            continue
+        items.append(
+            _item(
+                id=f"session:corner:{name}",
+                source="corner",
+                domain="technique",
+                action_kind="drive",
+                severity="tip" if avg_loss < 0.08 else "warning",
+                priority=30.0 + avg_loss * 80.0 + lap_n * 2.0,
+                confidence=conf,
+                title=f"Recurring loss: {name}",
+                detail=f"Avg +{avg_loss:.3f}s vs your PB on {lap_n} laps — not a one-off mistake.",
+                related_keys=[f"corner:{name}", "technique"],
+            )
+        )
+    return items
+
+
+def _session_pattern_items(df: pd.DataFrame, sample_laps: list[int], conf: float) -> list[CoachItem]:
+    from .metrics import get_lap
+
+    items: list[CoachItem] = []
+    if not sample_laps:
+        return items
+
+    high_coast = 0
+    high_lock = 0
+    partial_thr = 0
+    for lap_n in sample_laps:
+        lap_df = get_lap(df, lap_n)
+        if lap_df.empty:
+            continue
+        if "coasting" in lap_df.columns and "speed" in lap_df.columns:
+            if float((lap_df["coasting"] & (lap_df["speed"] > 120)).mean()) > 0.04:
+                high_coast += 1
+        if "lockup_risk" in lap_df.columns and int(lap_df["lockup_risk"].sum()) > 15:
+            high_lock += 1
+        if "throttle" in lap_df.columns and "brake" in lap_df.columns:
+            partial = (lap_df["throttle"] > 0.15) & (lap_df["throttle"] < 0.85) & (lap_df["brake"] < 0.05)
+            if float(partial.mean()) > 0.12:
+                partial_thr += 1
+
+    n = len(sample_laps)
+    if high_coast >= max(2, n // 3):
+        items.append(
+            _item(
+                id="session:coast",
+                source="insights",
+                domain="technique",
+                action_kind="drive",
+                severity="tip",
+                priority=24.0,
+                confidence=conf,
+                title="Coasting while fast (session)",
+                detail=f"High-speed coasting on {high_coast}/{n} laps — commit to brake or throttle earlier.",
+                related_keys=["coast"],
+            )
+        )
+    if high_lock >= max(2, n // 3):
+        items.append(
+            _item(
+                id="session:lockup",
+                source="insights",
+                domain="technique",
+                action_kind="drive",
+                severity="warning",
+                priority=32.0,
+                confidence=conf,
+                title="Lockups keep appearing",
+                detail=f"Significant lockups on {high_lock}/{n} laps — adjust markers or bias session-wide.",
+                related_keys=["lockup"],
+            )
+        )
+    if partial_thr >= max(2, n // 3):
+        items.append(
+            _item(
+                id="session:partial_throttle",
+                source="insights",
+                domain="technique",
+                action_kind="drive",
+                severity="tip",
+                priority=20.0,
+                confidence=conf * 0.9,
+                title="Hesitation on exit (session)",
+                detail=f"Mid-throttle on {partial_thr}/{n} laps — often a session-wide exit technique issue.",
+                related_keys=["throttle"],
+            )
+        )
+    return items
+
+
+def collect_session_coach_items(
+    df: pd.DataFrame,
+    *,
+    diagnosis: LapDiagnosis,
+    best_lap: int,
+    track: str | None = None,
+    track_length: float | None = None,
+    conditions: str | None = None,
+    include_setup_summary: tuple[list[Any], list[str]] | None = None,
+) -> list[CoachItem]:
+    """Gather session-wide coach items — trends and recurring issues vs PB."""
+    from .ers import channels_2026_insights, session_ers_insights
+    from .insights import generate_insights
+    from .stint_coach import session_stint_insights
+
+    conf = diagnosis.confidence
+    items: list[CoachItem] = []
+    items.extend(_diagnosis_items(diagnosis))
+    items.extend(_session_recurring_corner_items(diagnosis))
+
+    sample_laps = list(diagnosis.evidence.get("sample_laps") or [])
+    items.extend(_session_pattern_items(df, sample_laps, conf))
+
+    # PB lap technique baseline (not per selected lap)
+    for ins in generate_insights(
+        df,
+        best_lap,
+        reference_lap=best_lap,
+        track=track,
+        track_length=track_length,
+        conditions=conditions,
+    ):
+        if ins.severity == "info":
+            continue
+        if ins.category == "weather" and any(i.related_keys == ["weather"] for i in items):
+            continue
+        items.append(_insight_to_item(ins, conf * 0.85))
+
+    for tip in session_stint_insights(df, best_lap=best_lap, conditions=conditions):
+        if tip.severity == "info":
+            continue
+        items.append(_stint_to_item(tip, conf))
+
+    for tip in session_ers_insights(df, track=track, track_length=track_length):
+        if tip.severity in ("tip", "warning"):
+            items.append(_ers_to_item(tip, conf))
+
+    for tip in channels_2026_insights(df, best_lap, reference_lap=best_lap):
+        if tip.severity in ("tip", "warning"):
+            items.append(_ers_to_item(tip, conf * 0.85))
+
+    for tip in stint_window_insights(df, track_length_m=track_length):
+        if tip.severity in ("tip", "warning"):
+            items.append(_stint_to_item(tip, conf * 0.9))
+
+    if include_setup_summary:
+        changes, findings = include_setup_summary
+        items.append(setup_summary_item(diagnosis, changes, findings))
+
     return items
 
 
@@ -423,40 +603,42 @@ def rank_coach_items(items: list[CoachItem], limit: int = 8) -> tuple[list[Coach
 
 def coach_feed_for_session(
     df: pd.DataFrame,
-    focus_lap: int,
+    focus_lap: int | None = None,
     *,
-    ref_lap: int | None,
-    corner_cmp: pd.DataFrame | None,
-    track: str | None,
-    track_length: float | None,
-    conditions: str | None,
+    ref_lap: int | None = None,
+    corner_cmp: pd.DataFrame | None = None,
+    track: str | None = None,
+    track_length: float | None = None,
+    conditions: str | None = None,
     stored_insights: list[dict] | None = None,
     prefer_live: bool = True,
     extra_items: list[CoachItem] | None = None,
+    best_lap: int | None = None,
 ) -> tuple[LapDiagnosis, list[CoachItem], list[CoachItem]]:
-    """Build diagnosis + ranked coach feed."""
-    from .diagnosis import build_lap_diagnosis
+    """Build session diagnosis + ranked coach feed (whole stint, not one lap)."""
+    from .diagnosis import build_session_diagnosis
+    from .metrics import build_lap_summary
 
-    diag = build_lap_diagnosis(
+    summary = build_lap_summary(df, track_length=track_length)
+    if best_lap is None and not summary.empty:
+        best_lap = int(summary.loc[summary["is_best"], "lap"].iloc[0])
+    elif best_lap is None:
+        best_lap = int(focus_lap or 1)
+
+    diag = build_session_diagnosis(
         df,
-        focus_lap,
-        ref_lap=ref_lap,
-        corner_cmp=corner_cmp,
+        best_lap=best_lap,
         conditions=conditions,
         track=track,
         track_length=track_length,
     )
-    use_stored = None if prefer_live or not stored_insights else stored_insights
-    raw = collect_coach_items(
+    raw = collect_session_coach_items(
         df,
-        focus_lap,
-        ref_lap=ref_lap,
         diagnosis=diag,
-        corner_cmp=corner_cmp,
+        best_lap=best_lap,
         track=track,
         track_length=track_length,
         conditions=conditions,
-        use_stored_insights=use_stored,
     )
     if extra_items:
         raw.extend(extra_items)

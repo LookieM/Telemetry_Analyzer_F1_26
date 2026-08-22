@@ -423,6 +423,87 @@ def practice_ers_insights(
     return tips
 
 
+def session_ers_insights(
+    df: pd.DataFrame,
+    *,
+    track: str | None = None,
+    track_length: float | None = None,
+) -> list[ErsTip]:
+    """Session-level ERS patterns — harvest/push recipe and SOC vs pace."""
+    tips: list[ErsTip] = []
+    table = session_ers_table(df)
+    if table.empty:
+        return [ErsTip("warning", "No ERS data", "This session has no battery / deploy channels.")]
+
+    best = table.loc[table["is_best"]].iloc[0]
+
+    charged = table[table["start_mj"] >= 0.4]
+    empty = table[table["start_mj"] < 0.15]
+    if len(charged) >= 2 and len(empty) >= 2:
+        charged_best = float(charged["lap_time"].min())
+        empty_best = float(empty["lap_time"].min())
+        gap = empty_best - charged_best
+        if gap > 0.15:
+            tips.append(
+                ErsTip(
+                    "tip",
+                    "Battery buys lap time",
+                    f"Across this session, best charged lap is {charged_best:.3f}s vs best low-SOC "
+                    f"{empty_best:.3f}s ({gap:.3f}s). Plan harvest laps before push laps.",
+                )
+            )
+        elif gap < -0.15:
+            tips.append(
+                ErsTip(
+                    "info",
+                    "Pace not SOC-limited",
+                    f"Fastest work often came with lower battery ({empty_best:.3f}s vs charged {charged_best:.3f}s). "
+                    "Focus deploy placement and lift-coast harvest, not just filling the store.",
+                )
+            )
+
+    if len(table) >= 3:
+        build = table.sort_values(["end_mj", "harvested_mj"], ascending=False).iloc[0]
+        push = table.sort_values("lap_time").iloc[0]
+        tips.append(
+            ErsTip(
+                "tip",
+                "Session ERS recipe",
+                f"Pattern from this run: build like L{int(build['lap'])} "
+                f"(ended {build['end_mj']:.2f} MJ), push like L{int(push['lap'])} "
+                f"({push['lap_time']:.3f}s). Repeat harvest → attack.",
+            )
+        )
+
+    if "partial_throttle_deploy_pct" in table.columns:
+        partial = table[table["partial_throttle_deploy_pct"] > 1.5]
+    else:
+        partial = pd.DataFrame()
+    if len(partial) >= max(2, len(table) // 3):
+        tips.append(
+            ErsTip(
+                "warning",
+                "Deploying off throttle (session)",
+                f"{len(partial)}/{len(table)} laps dump significant energy below 85% throttle. "
+                "Save deploy for straights and flat exits.",
+            )
+        )
+
+    if "empty_pct" in table.columns:
+        empty_heavy = table[(table["empty_pct"] > 35) & (table["lap_time"] > best["lap_time"] + 0.3)]
+        if len(empty_heavy) >= max(2, len(table) // 4):
+            tips.append(
+                ErsTip(
+                    "tip",
+                    "Running empty while off-pace",
+                    f"{len(empty_heavy)} laps ended near-empty without matching PB pace. "
+                    "Shorten mid-lap deploy; save a hit for the longest straight.",
+                )
+            )
+
+    return tips
+
+
 def recommended_deploy_map(
     df: pd.DataFrame,
     track: str | None = None,
