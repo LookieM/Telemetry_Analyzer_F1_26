@@ -44,6 +44,8 @@ COMPACT_COLUMNS = [
     "activeAero_mode",
     "slip_max",
     "lockup_risk",
+    "lockup_front",
+    "lockup_rear",
     "coasting",
     "trail_braking",
     "tyre_compound_0",

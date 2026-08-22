@@ -253,14 +253,35 @@ def generate_insights(
     reference_lap: int | None = None,
     track: str | None = None,
     track_length: float | None = None,
+    conditions: str | None = None,
 ) -> list[Insight]:
     """Return human-readable coaching notes for a lap (optionally vs reference)."""
+    from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
+
     insights: list[Insight] = []
+    state = _as_state(conditions)
+    banner = weather_banner(state)
+    if banner:
+        insights.append(
+            Insight("info", f"Track state: {STATE_LABELS[state]}", banner, "weather")
+        )
+
     lap_df = get_lap(df, lap)
     if lap_df.empty:
         return [
             Insight("warning", "No data", f"Lap {lap} has no samples.", "data")
         ]
+
+    if is_wet_surface(state):
+        insights.append(
+            Insight(
+                "tip",
+                "Wet / low-grip braking",
+                "Expect earlier markers and longer trails than dry. "
+                "A late dry-style brake will lock or push — move markers out and keep the car straighter.",
+                "inputs",
+            )
+        )
 
     # --- Single-lap technique ---
     if "coasting" in lap_df.columns and "speed" in lap_df.columns:
@@ -310,7 +331,7 @@ def generate_insights(
                     "warning",
                     "Possible lock-ups",
                     f"Detected ~{locks} samples with high wheel slip under braking. "
-                    "Ease initial brake pressure or move bias rearward slightly.",
+                    "Ease brake pressure first; if the rear steps out, move bias forward (more % front).",
                     "braking",
                 )
             )

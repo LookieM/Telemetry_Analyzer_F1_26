@@ -8,7 +8,17 @@ import pandas as pd
 from .loader import mean_setup
 
 
-MIN_VALID_LAP_S = 25.0
+# Absolute floor/ceiling for a completed F1 26 flying lap.
+# Takebacks / red-flag partials often land ~20–40s and must not become PBs.
+MIN_VALID_LAP_S = 45.0
+MAX_VALID_LAP_S = 240.0
+# Incomplete lap: covered distance vs track length (or absolute metres).
+MIN_LAP_DISTANCE_FRAC = 0.72
+MIN_LAP_DISTANCE_M = 2200.0
+MIN_LAP_SAMPLES = 250
+# Relative to session median — catches short outliers when length is unknown.
+MIN_REL_MEDIAN = 0.68
+MAX_REL_MEDIAN = 1.85
 
 
 def session_meta(df: pd.DataFrame) -> dict:
@@ -32,23 +42,83 @@ def _lap_end_time(lap_df: pd.DataFrame) -> float | None:
     if "lap_time" not in lap_df.columns or lap_df.empty:
         return None
     t = float(lap_df["lap_time"].max())
-    return t if t >= MIN_VALID_LAP_S else None
+    if not np.isfinite(t):
+        return None
+    return t
 
 
-def build_lap_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per lap with pace, fuel, tyres, ERS, and input stats."""
+def _track_length_hint(df: pd.DataFrame, track_length: float | None = None) -> float | None:
+    if track_length is not None and float(track_length) > 500:
+        return float(track_length)
+    if "trackLength" in df.columns and not df["trackLength"].empty:
+        try:
+            v = float(df["trackLength"].iloc[0])
+            if v > 500:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def is_probable_lap(
+    lap_df: pd.DataFrame,
+    lap_time: float | None,
+    *,
+    track_length: float | None = None,
+) -> bool:
+    """
+    True for a completed flying lap; False for takebacks, red-flag partials,
+    and other telemetry glitches that produce absurdly short times.
+    """
+    if lap_time is None or not np.isfinite(lap_time):
+        return False
+    if lap_time < MIN_VALID_LAP_S or lap_time > MAX_VALID_LAP_S:
+        return False
+    if len(lap_df) < MIN_LAP_SAMPLES:
+        return False
+
+    if "lap_distance" in lap_df.columns and not lap_df.empty:
+        dmax = float(np.nanmax(lap_df["lap_distance"].to_numpy(dtype=float)))
+        if not np.isfinite(dmax):
+            return False
+        length = track_length
+        if length is not None and length > 500:
+            if dmax < MIN_LAP_DISTANCE_FRAC * float(length):
+                return False
+        elif dmax < MIN_LAP_DISTANCE_M:
+            return False
+
+    return True
+
+
+def _apply_relative_probable_mask(times: pd.Series) -> pd.Series:
+    """Drop short/long outliers vs session median when enough laps exist."""
+    ok = pd.Series(True, index=times.index)
+    if len(times) < 3:
+        return ok
+    med = float(times.median())
+    if not np.isfinite(med) or med <= 0:
+        return ok
+    ok &= times >= med * MIN_REL_MEDIAN
+    ok &= times <= med * MAX_REL_MEDIAN
+    return ok
+
+
+def build_lap_summary(df: pd.DataFrame, track_length: float | None = None) -> pd.DataFrame:
+    """One row per probable lap with pace, fuel, tyres, ERS, and input stats."""
     if "lap" not in df.columns:
         return pd.DataFrame()
 
+    length = _track_length_hint(df, track_length)
     rows = []
     for lap, lap_df in df.groupby("lap"):
         lap_time = _lap_end_time(lap_df)
-        if lap_time is None:
+        if not is_probable_lap(lap_df, lap_time, track_length=length):
             continue
 
         row: dict = {
             "lap": int(lap),
-            "lap_time": lap_time,
+            "lap_time": float(lap_time),
             "samples": len(lap_df),
         }
 
@@ -116,6 +186,11 @@ def build_lap_summary(df: pd.DataFrame) -> pd.DataFrame:
         return summary
 
     summary = summary.sort_values("lap").reset_index(drop=True)
+    rel_ok = _apply_relative_probable_mask(summary["lap_time"])
+    summary = summary.loc[rel_ok].reset_index(drop=True)
+    if summary.empty:
+        return summary
+
     best = summary["lap_time"].min()
     summary["delta_best"] = summary["lap_time"] - best
     summary["is_best"] = summary["lap_time"] == best

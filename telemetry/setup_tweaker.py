@@ -191,7 +191,7 @@ SETUP_PARAMS: list[SetupParam] = [
         0.70,
         0.01,
         0.020,
-        "50% rear ↔ 70% front. Forward → lock risk; rearward → entry rotation.",
+        "50–70% front. Prefer ~57%+ for stability; too rearward locks the rear on light brake.",
         display_scale=100.0,
     ),
     SetupParam(
@@ -321,11 +321,14 @@ def estimate_setup_delta(
     *,
     track: str | None = None,
     reference_lap_time: float | None = None,
+    conditions: str | None = None,
 ) -> SetupEstimate:
     """
     Estimate lap-time change proposed - baseline.
     Negative total_dt => proposed setup expected faster.
     """
+    from .conditions import _as_state, is_wet_surface
+
     base = normalize_setup(baseline)
     prop = normalize_setup(proposed)
     pmap = _param_map()
@@ -340,11 +343,18 @@ def estimate_setup_delta(
         "fuel": 0.0,
     }
 
+    state = _as_state(conditions)
+    wet = is_wet_surface(state)
     t = (track or "").lower()
     high_downforce = any(x in t for x in ("monaco", "hungar", "singapore", "zandvoort"))
     power_track = any(x in t for x in ("monza", "baku", "jeddah", "las vegas", "spa"))
     aero_mult = 1.25 if high_downforce else (0.75 if power_track else 1.0)
     drag_mult = 1.35 if power_track else (0.8 if high_downforce else 1.0)
+    if wet:
+        # Extra DF pays more when the surface is slippery; drag cost shrinks relatively
+        wet_boost = {"damp": 1.15, "inter": 1.35, "wet": 1.55}.get(state, 1.3)
+        aero_mult *= wet_boost
+        drag_mult *= 0.75
 
     for key, b in base.items():
         if key not in prop or key not in pmap:
@@ -364,7 +374,12 @@ def estimate_setup_delta(
         elif key.startswith("tyre_press"):
             disp_b = display_value(p, b)
             disp_v = display_value(p, v)
-            opt = 25.0 if key.endswith(("_0", "_1")) else 22.0
+            if state == "wet":
+                opt = 22.5 if key.endswith(("_0", "_1")) else 20.8
+            elif state in ("inter", "damp"):
+                opt = 23.5 if key.endswith(("_0", "_1")) else 21.2
+            else:
+                opt = 25.0 if key.endswith(("_0", "_1")) else 22.0
             pen_b = 0.004 * (disp_b - opt) ** 2
             pen_v = 0.004 * (disp_v - opt) ** 2
             est = pen_v - pen_b
@@ -442,24 +457,48 @@ def estimate_setup_delta(
     )
 
 
-def setup_presets(baseline: dict[str, Any]) -> dict[str, dict[str, float]]:
+def setup_presets(baseline: dict[str, Any], conditions: str | None = None) -> dict[str, dict[str, float]]:
     """Handy one-click directions from the current garage."""
+    from .conditions import _as_state, is_wet_surface
+
     b = normalize_setup(baseline)
+    state = _as_state(conditions)
+    wet = is_wet_surface(state)
     presets = {}
     if "wing_setup_0" in b and "wing_setup_1" in b:
+        wing_step = 3 if wet else 2
         presets["More downforce"] = {
             **b,
-            "wing_setup_0": min(50, b["wing_setup_0"] + 2),
-            "wing_setup_1": min(50, b["wing_setup_1"] + 2),
+            "wing_setup_0": min(50, b["wing_setup_0"] + wing_step),
+            "wing_setup_1": min(50, b["wing_setup_1"] + wing_step),
         }
-        presets["Less drag"] = {
-            **b,
-            "wing_setup_0": max(0, b["wing_setup_0"] - 2),
-            "wing_setup_1": max(0, b["wing_setup_1"] - 3),
-        }
+        if not wet:
+            presets["Less drag"] = {
+                **b,
+                "wing_setup_0": max(0, b["wing_setup_0"] - 2),
+                "wing_setup_1": max(0, b["wing_setup_1"] - 3),
+            }
+        else:
+            presets["Wet DF push"] = {
+                **b,
+                "wing_setup_0": min(50, b["wing_setup_0"] + 4),
+                "wing_setup_1": min(50, b["wing_setup_1"] + 5),
+            }
     if "brake_bias_setup" in b:
-        presets["Rearward bias"] = {**b, "brake_bias_setup": max(0.50, b["brake_bias_setup"] - 0.02)}
-        presets["Forward bias"] = {**b, "brake_bias_setup": min(0.70, b["brake_bias_setup"] + 0.02)}
+        presets["Forward bias (stable)"] = {
+            **b,
+            "brake_bias_setup": min(0.62, b["brake_bias_setup"] + 0.02),
+        }
+        if not wet:
+            presets["Rearward bias (careful)"] = {
+                **b,
+                "brake_bias_setup": max(0.55, b["brake_bias_setup"] - 0.01),
+            }
+    if "brake_press_setup" in b and b["brake_press_setup"] > 0.92:
+        presets["Softer brake bite"] = {
+            **b,
+            "brake_press_setup": max(0.80, b["brake_press_setup"] - 0.05),
+        }
     if "fuel_setup" in b:
         presets["Quali fuel (min)"] = {**b, "fuel_setup": 5.0}
         presets["Race fuel (+10)"] = {**b, "fuel_setup": min(110, b["fuel_setup"] + 10)}
@@ -467,6 +506,12 @@ def setup_presets(baseline: dict[str, Any]) -> dict[str, dict[str, float]]:
         presets["More exit rotation"] = {
             **b,
             "diff_onThrottle_setup": max(0.10, b["diff_onThrottle_setup"] - 0.10),
+        }
+    if wet and "arb_setup_1" in b:
+        presets["Softer rear (traction)"] = {
+            **b,
+            "arb_setup_1": max(1, b["arb_setup_1"] - 2),
+            "susp_spring_setup_1": max(1, b.get("susp_spring_setup_1", 10) - 2),
         }
     return presets
 

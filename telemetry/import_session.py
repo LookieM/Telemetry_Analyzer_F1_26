@@ -16,7 +16,7 @@ from .db import (
 )
 from .insights import generate_insights
 from .loader import load_telemetry, mean_setup
-from .metrics import build_lap_summary, session_meta
+from .metrics import MIN_VALID_LAP_S, build_lap_summary, session_meta
 
 
 @dataclass
@@ -74,11 +74,14 @@ def import_csv(
     if df.empty or "lap" not in df.columns:
         raise ValueError("Could not parse lap telemetry from this file.")
 
-    summary = build_lap_summary(df)
-    if summary.empty:
-        raise ValueError("No valid completed laps found (need lap time > 25s).")
-
     meta = session_meta(df)
+    summary = build_lap_summary(df, track_length=meta.get("track_length"))
+    if summary.empty:
+        raise ValueError(
+            f"No probable completed laps found (need ~{MIN_VALID_LAP_S:.0f}s+ flying laps with full distance; "
+            "takebacks / red-flag partials are ignored)."
+        )
+
     setup = mean_setup(df)
     from .setup_history import compute_setup_fingerprint
 

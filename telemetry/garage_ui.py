@@ -140,6 +140,7 @@ def render_garage_tweaker(
     reference_lap_time: float | None = None,
     base_label: str = "baseline",
     chart_prefix: str = "garage",
+    conditions: str | None = None,
 ) -> dict[str, float]:
     """
     Render presets, sliders, Δt estimate, and proposed metrics.
@@ -158,7 +159,7 @@ def render_garage_tweaker(
         proposed.setdefault(k, v)
 
     # Presets must start from current proposed (not baseline), so sliders aren't wiped
-    presets = setup_presets(proposed) if proposed else {}
+    presets = setup_presets(proposed, conditions=conditions) if proposed else {}
     if presets:
         pcols = st.columns(min(4, max(1, len(presets))))
         for i, (name, preset) in enumerate(presets.items()):
@@ -213,6 +214,7 @@ def render_garage_tweaker(
         proposed,
         track=track,
         reference_lap_time=reference_lap_time,
+        conditions=conditions,
     )
     with right:
         st.subheader("Estimated impact")

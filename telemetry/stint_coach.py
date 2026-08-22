@@ -112,19 +112,31 @@ def stint_saving_insights(
     df: pd.DataFrame,
     focus_lap: int,
     reference_lap: int | None = None,
+    conditions: str | None = None,
 ) -> list[StintTip]:
+    from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
+
     tips: list[StintTip] = []
+    state = _as_state(conditions)
+    banner = weather_banner(state)
+    if banner:
+        tips.append(StintTip("info", f"Track state: {STATE_LABELS[state]}", banner, "weather"))
+
     table = session_stint_table(df)
     if table.empty:
-        return [StintTip("warning", "No stint data", "Need fuel/tyre channels in the session.", "tyre")]
+        return tips + [StintTip("warning", "No stint data", "Need fuel/tyre channels in the session.", "tyre")]
 
     focus_rows = table[table["lap"] == focus_lap]
     if focus_rows.empty:
-        return [StintTip("warning", "Lap missing", f"Lap {focus_lap} not found.", "technique")]
+        return tips + [StintTip("warning", "Lap missing", f"Lap {focus_lap} not found.", "technique")]
     focus = focus_rows.iloc[0]
     best = table.loc[table["is_best"]].iloc[0]
     ref_lap = reference_lap if reference_lap is not None else int(best["lap"])
     ref = table[table["lap"] == ref_lap].iloc[0] if (table["lap"] == ref_lap).any() else best
+
+    wet = is_wet_surface(state)
+    hot_lim = 88 if state == "wet" else (95 if wet else 95)
+    cold_lim = 42 if state == "wet" else (55 if wet else 70)
 
     # Fuel
     if pd.notna(focus.get("fuel_used")) and pd.notna(table["fuel_used"].median()):
@@ -205,26 +217,53 @@ def stint_saving_insights(
                     "tyre",
                 )
             )
-        if temps["avg"] > 95:
+        if temps["avg"] > hot_lim:
             tips.append(
                 StintTip(
                     "tip",
                     "Tyres running hot",
-                    "Average surface temp is high. Reduce sliding (earlier throttle, less oversteer), "
-                    "raise pressures slightly if graining/overheating, and avoid mid-corner partial throttle fights.",
+                    (
+                        "Wet/inter surfaces usually run cooler — if temps are this high, you're sliding. "
+                        "Calm inputs, earlier throttle, and a small pressure rise."
+                        if wet
+                        else "Average surface temp is high. Reduce sliding (earlier throttle, less oversteer), "
+                        "raise pressures slightly if graining/overheating, and avoid mid-corner partial throttle fights."
+                    ),
                     "tyre",
                 )
             )
-        elif temps["avg"] < 70:
-            tips.append(
-                StintTip(
-                    "tip",
-                    "Tyres under window",
-                    "Temps look cool — you'll lack grip. Warm-up with a weave / push sector, "
-                    "or lower pressures a step if the compound never comes in.",
-                    "tyre",
+        elif temps["avg"] < cold_lim:
+            if wet:
+                tips.append(
+                    StintTip(
+                        "info",
+                        "Cool surface temps",
+                        f"Avg {temps['avg']:.0f}°C is normal for {STATE_LABELS[state]}. "
+                        "Don't drop pressures like dry slicks — build temp with commitment, not weave alone.",
+                        "tyre",
+                    )
                 )
+            else:
+                tips.append(
+                    StintTip(
+                        "tip",
+                        "Tyres under window",
+                        "Temps look cool — you'll lack grip. Warm-up with a weave / push sector, "
+                        "or lower pressures a step if the compound never comes in.",
+                        "tyre",
+                    )
+                )
+
+    if wet:
+        tips.append(
+            StintTip(
+                "tip",
+                "Wet technique",
+                "Brake earlier and straighter, feed throttle later, and prioritise exits over apex speed. "
+                "Standing water = lift early on kerbs and painted lines.",
+                "technique",
             )
+        )
 
     # Wear / lockups
     if pd.notna(focus.get("wear_delta_pct")) and focus["wear_delta_pct"] > 0:
@@ -243,8 +282,8 @@ def stint_saving_insights(
                 "warning",
                 "Lock-ups eating tyres",
                 f"~{int(focus['lockup_samples'])} high-slip braking samples. "
-                "Softer initial pressure, slightly rearward bias, or earlier brake markers — "
-                "flat spots cost both grip and fuel from corrective throttle.",
+                "Drop brake pressure a few %, and if the car snaps on entry move bias forward — "
+                "rearward bias makes light brake inputs spin you.",
                 "tyre",
             )
         )

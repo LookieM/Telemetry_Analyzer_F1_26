@@ -27,9 +27,14 @@ REAR_PRESS = ("tyre_press_setup_2", "tyre_press_setup_3")
 FRONT_RH = ("susp_height_setup_0", "susp_height_setup_1")
 REAR_RH = ("susp_height_setup_2", "susp_height_setup_3")
 
-# F1 26 working window (surface ~90–105°C is typical in these dumps)
+# F1 26 working windows (surface temps from practice dumps)
 TYRE_HOT = 103.0
 TYRE_COLD = 78.0
+# Wets / inters run cooler — do not treat ~70°C as "cold slicks"
+TYRE_HOT_WET = 88.0
+TYRE_COLD_WET = 42.0
+TYRE_HOT_INTER = 95.0
+TYRE_COLD_INTER = 55.0
 
 
 @dataclass
@@ -225,8 +230,13 @@ def analyze_practice_balance(df: pd.DataFrame, lap: int | None = None) -> dict[s
     out["mid_slip"] = _mean_mask(slip, masks["mid"])
 
     if masks["braking"].any() and "lockup_risk" in lap_df.columns:
-        out["lockup_frac"] = float(lap_df.loc[masks["braking"], "lockup_risk"].astype(float).mean())
+        brk = masks["braking"]
+        out["lockup_frac"] = float(lap_df.loc[brk, "lockup_risk"].astype(float).mean())
         out["lockups"] = int(lap_df["lockup_risk"].sum())
+        if "lockup_front" in lap_df.columns:
+            out["lockup_front_frac"] = float(lap_df.loc[brk, "lockup_front"].astype(float).mean())
+        if "lockup_rear" in lap_df.columns:
+            out["lockup_rear_frac"] = float(lap_df.loc[brk, "lockup_rear"].astype(float).mean())
     elif "lockup_risk" in lap_df.columns:
         out["lockups"] = int(lap_df["lockup_risk"].sum())
         out["lockup_frac"] = 0.0
@@ -310,86 +320,267 @@ def _delta_for_strength(strength: str, mild: float, medium: float, strong: float
 
 
 def _apply_understeer(setup: dict[str, float], phase: str, strength: str, changes: list[SetupChange], findings: list[str]) -> None:
-    w = _delta_for_strength(strength, 1, 2, 3)
-    arb = _delta_for_strength(strength, 1, 2, 3)
-    diff = _delta_for_strength(strength, 0.03, 0.05, 0.08)
-    findings.append(f"{strength.capitalize()} {phase} understeer — add front grip / free the rear a little.")
+    w = _delta_for_strength(strength, 1, 2, 2)
+    # One ARB click max — stacking soft-front + stiff-rear on a wild base = snap oversteer
+    arb = 1
+    diff = _delta_for_strength(strength, 0.01, 0.02, 0.03)
+    findings.append(
+        f"{strength.capitalize()} {phase} understeer — prefer front wing; keep springs/ARBs matched."
+    )
     if phase in ("entry", "all"):
-        _nudge(setup, "diff_offThrottle_setup", -diff, "Freer off-throttle diff for entry rotation", changes)
-        _nudge(setup, "toe_setup_0", 0.02 if strength != "mild" else 0.01, "A touch more front toe-out for turn-in", changes)
+        _nudge(setup, "diff_offThrottle_setup", -diff, "Slightly freer off-throttle for entry rotation", changes)
+        _nudge(setup, "toe_setup_0", 0.01, "A touch more front toe-out for turn-in", changes)
     if phase in ("mid", "all", "entry"):
         _nudge(setup, "wing_setup_0", w, "More front wing vs push", changes)
-        _nudge(setup, "arb_setup_0", -arb, "Softer front ARB for mid-corner rotation", changes)
+        af = setup.get("arb_setup_0")
+        ar = setup.get("arb_setup_1")
+        # Soften front ARB only if it stays within 3 of rear (don't create split packages)
+        if af is not None and (ar is None or af - 1 >= (ar or af) - 3):
+            _nudge(setup, "arb_setup_0", -arb, "Softer front ARB for mid-corner rotation", changes)
         if strength != "mild":
-            _nudge(setup, "arb_setup_1", 1, "Slightly stiffer rear ARB to help the nose", changes)
             _nudge(setup, "camber_setup_0", -0.05, "More negative front camber for mid-corner grip", changes)
     if strength == "strong" and phase == "mid":
         _nudge_pair(setup, FRONT_RH, -1, "Lower front ride height for more front aero", changes)
 
 
 def _apply_oversteer(setup: dict[str, float], phase: str, strength: str, changes: list[SetupChange], findings: list[str]) -> None:
-    w = _delta_for_strength(strength, 1, 2, 3)
-    arb = _delta_for_strength(strength, 1, 2, 3)
-    diff = _delta_for_strength(strength, 0.04, 0.06, 0.10)
-    findings.append(f"{strength.capitalize()} {phase} oversteer — plant the rear, don't pile on front wing.")
+    w = _delta_for_strength(strength, 1, 2, 2)
+    diff = _delta_for_strength(strength, 0.04, 0.06, 0.08)
+    findings.append(
+        f"{strength.capitalize()} {phase} oversteer — plant the rear with wing/diff; don't flop the rear spring."
+    )
     if phase in ("exit", "all"):
         _nudge(setup, "diff_onThrottle_setup", diff, "Tighter on-throttle diff to calm exits", changes)
-        _nudge(setup, "arb_setup_1", -arb, "Softer rear ARB for traction", changes)
+        ar = setup.get("arb_setup_1")
+        af = setup.get("arb_setup_0")
+        if ar is not None and ar >= 8 and (af is None or ar - 1 <= (af or ar) + 3):
+            _nudge(setup, "arb_setup_1", -1, "Slightly softer rear ARB for traction", changes)
+        sr = setup.get("susp_spring_setup_1")
+        # Only ease rear spring if it's already on the firm side — never toward 3–8
+        if strength != "mild" and sr is not None and sr >= 16:
+            _nudge(setup, "susp_spring_setup_1", -1, "Slightly softer rear spring for exit grip", changes)
         if strength != "mild":
-            _nudge(setup, "susp_spring_setup_1", -2, "Softer rear spring for exit grip", changes)
             _nudge(setup, "camber_setup_1", 0.05, "Less rear camber to help traction", changes)
     if phase in ("mid", "entry", "all"):
         _nudge(setup, "wing_setup_1", w, "More rear wing for stability", changes)
         if phase == "entry":
             _nudge(setup, "diff_offThrottle_setup", diff, "Tighter off-throttle diff for entry stability", changes)
             _nudge(setup, "toe_setup_1", 0.02, "More rear toe-in for stability", changes)
+            _nudge(setup, "brake_bias_setup", 0.01, "Forward bias — stop rear locking on entry", changes)
     if strength == "strong" and phase == "exit":
         _nudge_pair(setup, REAR_PRESS, -psi_to_pa(0.3), "A little less rear pressure for mechanical grip", changes)
 
 
 def _apply_mixed(setup: dict[str, float], strength: str, changes: list[SetupChange], findings: list[str]) -> None:
     findings.append(
-        "Push on entry and loose on exit — keep aero, fix diffs: rotate on the brakes, lock the rear on throttle."
+        "Push on entry and loose on exit — fix with aero/diff; leave spring package matched."
     )
-    diff_off = _delta_for_strength(strength, 0.04, 0.06, 0.08)
+    diff_off = _delta_for_strength(strength, 0.01, 0.02, 0.03)
     diff_on = _delta_for_strength(strength, 0.05, 0.08, 0.10)
-    _nudge(setup, "diff_offThrottle_setup", -diff_off, "Freer off-throttle for entry rotation", changes)
+    _nudge(setup, "diff_offThrottle_setup", -diff_off, "Slightly freer off-throttle for entry", changes)
     _nudge(setup, "diff_onThrottle_setup", diff_on, "Tighter on-throttle to stop exit snap", changes)
-    _nudge(setup, "arb_setup_1", -1, "Slightly softer rear ARB for traction", changes)
+    _nudge(setup, "brake_bias_setup", 0.01, "Slight forward bias for stable brake entry", changes)
     if strength != "mild":
         _nudge(setup, "wing_setup_1", 1, "One click of rear wing for exit stability", changes)
         _nudge(setup, "toe_setup_0", 0.01, "A little front toe-out for turn-in", changes)
+        # Soften rear ARB one click only if matched package allows
+        ar = setup.get("arb_setup_1")
+        af = setup.get("arb_setup_0")
+        if ar is not None and ar >= 8 and (af is None or abs((af or ar) - (ar - 1)) <= 3):
+            _nudge(setup, "arb_setup_1", -1, "Slightly softer rear ARB for traction", changes)
 
 
-def _tyre_window(setup: dict[str, float], symptoms: dict[str, Any], changes: list[SetupChange], findings: list[str]) -> None:
+def _harmonize_mech(
+    setup: dict[str, float],
+    changes: list[SetupChange],
+    findings: list[str],
+) -> None:
+    """Clamp spring/ARB into a coherent package after coach nudges."""
+    from .track_setups import coherent_suspension
+
+    need = ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1")
+    if not all(k in setup for k in need):
+        return
+    sf0, sr0 = float(setup["susp_spring_setup_0"]), float(setup["susp_spring_setup_1"])
+    af0, ar0 = float(setup["arb_setup_0"]), float(setup["arb_setup_1"])
+    sf, sr, af, ar = coherent_suspension(sf0, sr0, af0, ar0)
+    touched = False
+    for key, old, new in (
+        ("susp_spring_setup_0", sf0, sf),
+        ("susp_spring_setup_1", sr0, sr),
+        ("arb_setup_0", af0, af),
+        ("arb_setup_1", ar0, ar),
+    ):
+        if abs(old - new) >= 0.5:
+            _apply(setup, key, new, "Harmonise suspension — keep F/R package matched", changes)
+            touched = True
+    if touched:
+        findings.append(
+            f"Suspension harmonised to springs {sf:.0f}/{sr:.0f} · ARB {af:.0f}/{ar:.0f} "
+            "(avoids front-stiff / rear-floppy snap)."
+        )
+
+
+def _tyre_thresholds(conditions: str | None) -> tuple[float, float]:
+    from .conditions import _as_state
+
+    state = _as_state(conditions)
+    if state == "wet":
+        return TYRE_HOT_WET, TYRE_COLD_WET
+    if state in ("inter", "damp"):
+        return TYRE_HOT_INTER, TYRE_COLD_INTER
+    return TYRE_HOT, TYRE_COLD
+
+
+def _tyre_window(
+    setup: dict[str, float],
+    symptoms: dict[str, Any],
+    changes: list[SetupChange],
+    findings: list[str],
+    conditions: str | None = None,
+) -> None:
+    from .conditions import STATE_LABELS, _as_state, is_wet_surface
+
     tavg = symptoms.get("temp_avg")
     spread = symptoms.get("temp_spread_axle")
     if tavg is None:
         return
-    bump = psi_to_pa(0.4)
-    if tavg > TYRE_HOT:
-        findings.append(f"Tyres hot in corners ({tavg:.0f}°C) — raise pressures on the working axle.")
+    hot, cold = _tyre_thresholds(conditions)
+    bump = psi_to_pa(0.3 if is_wet_surface(conditions) else 0.4)
+    state = _as_state(conditions)
+    if tavg > hot:
+        findings.append(
+            f"Tyres hot in corners ({tavg:.0f}°C, {STATE_LABELS[state]} window) — raise pressures on the working axle."
+        )
         if spread is not None and spread > 6:
-            _nudge_pair(setup, FRONT_PRESS, bump, "Fronts overheating — +0.4 psi", changes)
+            _nudge_pair(setup, FRONT_PRESS, bump, "Fronts overheating — raise psi", changes)
         elif spread is not None and spread < -6:
-            _nudge_pair(setup, REAR_PRESS, bump, "Rears overheating — +0.4 psi", changes)
+            _nudge_pair(setup, REAR_PRESS, bump, "Rears overheating — raise psi", changes)
         else:
-            _nudge_pair(setup, FRONT_PRESS, bump, "Hot tyres — +0.4 psi fronts", changes)
-            _nudge_pair(setup, REAR_PRESS, bump, "Hot tyres — +0.4 psi rears", changes)
-    elif tavg < TYRE_COLD:
-        findings.append(f"Tyres cool in corners ({tavg:.0f}°C) — drop pressures to help warm-up.")
-        _nudge_pair(setup, FRONT_PRESS, -bump, "Cold tyres — −0.4 psi fronts", changes)
-        _nudge_pair(setup, REAR_PRESS, -bump, "Cold tyres — −0.4 psi rears", changes)
+            _nudge_pair(setup, FRONT_PRESS, bump, "Hot tyres — raise front psi", changes)
+            _nudge_pair(setup, REAR_PRESS, bump, "Hot tyres — raise rear psi", changes)
+    elif tavg < cold:
+        if is_wet_surface(conditions):
+            findings.append(
+                f"Surface temps low ({tavg:.0f}°C) — expected in {STATE_LABELS[state]}; "
+                "avoid big pressure cuts that overheat the carcass later."
+            )
+            if tavg < cold - 8:
+                _nudge_pair(setup, FRONT_PRESS, -bump * 0.5, "Very cold wet/inter — slight −psi fronts", changes)
+                _nudge_pair(setup, REAR_PRESS, -bump * 0.5, "Very cold wet/inter — slight −psi rears", changes)
+        else:
+            findings.append(f"Tyres cool in corners ({tavg:.0f}°C) — drop pressures to help warm-up.")
+            _nudge_pair(setup, FRONT_PRESS, -bump, "Cold tyres — −0.4 psi fronts", changes)
+            _nudge_pair(setup, REAR_PRESS, -bump, "Cold tyres — −0.4 psi rears", changes)
 
 
-def _brake_fix(setup: dict[str, float], symptoms: dict[str, Any], changes: list[SetupChange], findings: list[str]) -> None:
-    frac = symptoms.get("lockup_frac") or 0.0
-    if frac < 0.08:
-        return
-    findings.append(f"Lock-ups on {frac * 100:.0f}% of heavy-brake samples — bias rearward, keep 100% pressure unless it's severe.")
-    _nudge(setup, "brake_bias_setup", -0.02 if frac < 0.16 else -0.03, "Rearward bias vs front lock-ups", changes)
-    if frac >= 0.18:
-        _nudge(setup, "brake_press_setup", -0.02, "Ease brake pressure — lock-ups are frequent", changes)
+def _brake_fix(
+    setup: dict[str, float],
+    symptoms: dict[str, Any],
+    changes: list[SetupChange],
+    findings: list[str],
+    conditions: str | None = None,
+) -> None:
+    """
+    Fix brake bite / bias without spinning the car.
+
+    'Touch of brake = wall' is almost always too much initial pressure and/or
+    bias too far rearward (rear locks, car rotates into the barrier). Old logic
+    always moved bias rearward on any lockup — that made rear snaps worse.
+    """
+    from .conditions import is_wet_surface
+
+    frac = float(symptoms.get("lockup_frac") or 0.0)
+    front_f = symptoms.get("lockup_front_frac")
+    rear_f = symptoms.get("lockup_rear_frac")
+    spread = float(symptoms.get("temp_spread_axle") or 0.0)
+    issue = symptoms.get("issue") or "balanced"
+    phase = symptoms.get("issue_phase") or "all"
+
+    # Always soften absurd 100% pressure a touch on coach builds — safer bite
+    press = setup.get("brake_press_setup")
+    if press is not None and press > 0.97 and (frac >= 0.05 or issue == "oversteer"):
+        _nudge(setup, "brake_press_setup", -0.03, "Ease brake pressure — softer initial bite", changes)
+        findings.append("Brake pressure was near max — eased for controllable initial bite.")
+
+    if frac >= 0.06 or front_f is not None or rear_f is not None:
+        rear_dom = False
+        front_dom = False
+        if front_f is not None and rear_f is not None:
+            rear_dom = rear_f >= front_f + 0.02 and rear_f >= 0.05
+            front_dom = front_f >= rear_f + 0.02 and front_f >= 0.05
+        else:
+            # No axle split: use balance clues. Entry oversteer / hot rears → treat as rear lock.
+            if issue == "oversteer" and phase in ("entry", "all", "mid"):
+                rear_dom = True
+            elif spread < -4:
+                rear_dom = True
+            elif spread > 5 and frac >= 0.08:
+                front_dom = True
+            elif frac >= 0.12:
+                # Ambiguous lockups: prefer safer forward bias + lower pressure, not rearward
+                rear_dom = True
+
+        if rear_dom or (frac >= 0.10 and not front_dom):
+            findings.append(
+                "Rear locking / unstable on the brakes — move bias forward and soften pressure so light inputs don't spin you."
+            )
+            _nudge(setup, "brake_bias_setup", 0.02 if frac >= 0.14 else 0.01, "Forward bias vs rear lock / entry snap", changes)
+            _nudge(setup, "brake_press_setup", -0.03 if frac >= 0.14 else -0.02, "Lower brake pressure for gentler bite", changes)
+            if setup.get("diff_offThrottle_setup") is not None:
+                _nudge(setup, "diff_offThrottle_setup", 0.03, "Tighter off-throttle while braking", changes)
+        elif front_dom:
+            findings.append(
+                f"Front lock-ups (~{frac * 100:.0f}% of heavy brake) — small rearward bias and/or less pressure."
+            )
+            # Only 1% rearward max — large rearward moves cause the wall snap
+            _nudge(setup, "brake_bias_setup", -0.01, "Slight rearward bias vs front lock-ups", changes)
+            if frac >= 0.14:
+                _nudge(setup, "brake_press_setup", -0.02, "Ease brake pressure — front lock-ups", changes)
+        elif frac >= 0.08:
+            findings.append("Lock-ups under braking — ease pressure first (safer than big bias swings).")
+            _nudge(setup, "brake_press_setup", -0.02, "Ease brake pressure vs lock-ups", changes)
+
+    _clamp_brake_stability(setup, changes, findings, conditions=conditions)
+
+
+def _clamp_brake_stability(
+    setup: dict[str, float],
+    changes: list[SetupChange],
+    findings: list[str],
+    conditions: str | None = None,
+) -> None:
+    """Hard safety band so coach never ships a spin-prone brake package."""
+    from .conditions import is_wet_surface
+
+    wet = is_wet_surface(conditions)
+    # Dry: keep bias forward enough to be driveable. Wet: allow a touch more rear.
+    lo, hi = (0.53, 0.62) if wet else (0.55, 0.62)
+    bias_key = "brake_bias_setup" if "brake_bias_setup" in setup else None
+    if bias_key:
+        cur = float(setup[bias_key])
+        clipped = float(np.clip(cur, lo, hi))
+        if abs(clipped - cur) > 1e-6:
+            _apply(
+                setup,
+                bias_key,
+                clipped,
+                f"Clamp bias to safe band ({lo * 100:.0f}–{hi * 100:.0f}% front)",
+                changes,
+            )
+            findings.append(
+                f"Brake bias clamped to {clipped * 100:.0f}% front — outside this range the car snaps on light brake."
+            )
+        if "front_brake_bias" in setup:
+            setup["front_brake_bias"] = setup[bias_key]
+
+    if "brake_press_setup" in setup:
+        press = float(setup["brake_press_setup"])
+        # Cap bite unless the driver is clearly locking only the fronts with low pressure
+        max_press = 0.97 if wet else 0.98
+        if press > max_press:
+            _apply(setup, "brake_press_setup", max_press, "Cap brake pressure for controllable bite", changes)
+
 
 
 def _aero_vs_typical(
@@ -423,6 +614,65 @@ def _aero_vs_typical(
         findings.append("Balance is OK but downforce is low vs the track pack — added two clicks each.")
 
 
+def _change_group(key: str, reason: str) -> str:
+    r = reason.lower()
+    if key in ("brake_bias_setup", "front_brake_bias", "brake_press_setup"):
+        return "brakes"
+    if "brake" in r or "bias" in r or "lock" in r or "bite" in r:
+        return "brakes"
+    if key.startswith("wing"):
+        return "aero"
+    if key.startswith("tyre_press"):
+        return "tyres"
+    if key.startswith("diff"):
+        return "diff"
+    if key.startswith(("arb", "susp_", "camber", "toe")):
+        return "mech"
+    return "other"
+
+
+def _enforce_change_budget(changes: list[SetupChange], max_groups: int = 3) -> list[SetupChange]:
+    """
+    Keep at most max_groups mechanical lever groups (+ fuel always kept).
+
+    Order: brakes → aero OR mech (not both) → diff OR tyres.
+    """
+    fuel = [c for c in changes if c.key == "fuel_setup"]
+    mech = [c for c in changes if c.key != "fuel_setup"]
+    if not mech:
+        return fuel
+
+    groups: dict[str, list[SetupChange]] = {}
+    for c in mech:
+        g = _change_group(c.key, c.reason)
+        groups.setdefault(g, []).append(c)
+
+    order = ["brakes", "aero", "mech", "diff", "tyres", "other"]
+    kept: list[SetupChange] = []
+    used: set[str] = set()
+
+    for g in order:
+        if g not in groups:
+            continue
+        if g == "mech" and "aero" in used:
+            continue
+        if g == "aero" and "mech" in used:
+            continue
+        if len(used) >= max_groups:
+            break
+        used.add(g)
+        kept.extend(groups[g])
+
+    return fuel + kept
+
+
+def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> None:
+    for c in changes:
+        setup[c.key] = _clip(c.key, c.after)
+        if c.key == "brake_bias_setup" and "front_brake_bias" in setup:
+            setup["front_brake_bias"] = setup[c.key]
+
+
 def build_setup_from_practice(
     df: pd.DataFrame,
     session_setup: dict[str, Any] | None,
@@ -431,40 +681,77 @@ def build_setup_from_practice(
     variant: str = "quali",
     lap: int | None = None,
     prefer_typical_base: bool = False,
+    conditions: str | None = None,
+    diagnosis: Any | None = None,
+    corner_cmp: pd.DataFrame | None = None,
 ) -> BuiltSetup:
     """
     Start from the session garage (what you ran), fill missing keys from the
     track typical, then apply a small diagnosis-led tweak.
     """
+    from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
+    from .track_setups import apply_weather_overlay
+
     track_n = normalize_track_name(track)
-    typical = get_typical_setup(track_n, variant)
+    state = _as_state(conditions)
+    typical = get_typical_setup(track_n, variant, conditions=state)
     session_n = normalize_setup(session_setup or {})
 
     if prefer_typical_base and typical:
         setup = deepcopy(typical["setup"])
-        base_source = f"Typical {track_n} {typical['variant']}"
+        base_source = f"Typical {track_n} {typical['variant']} ({STATE_LABELS[state]})"
         findings = [typical["notes"], "Started from the track typical (not your session garage)."]
     elif session_n:
         setup = deepcopy(session_n)
-        base_source = "Your session setup"
-        findings = ["Started from the setup stored in this practice export."]
+        if is_wet_surface(state):
+            # Session garage is usually a dry export — bias keys toward wet typical
+            setup = apply_weather_overlay(setup, state)
+            base_source = f"Your session setup + {STATE_LABELS[state]} overlay"
+            findings = [
+                f"Started from the session garage, then applied the {STATE_LABELS[state]} weather overlay."
+            ]
+        else:
+            base_source = "Your session setup"
+            findings = ["Started from the setup stored in this practice export."]
     elif typical:
         setup = deepcopy(typical["setup"])
-        base_source = f"Typical {track_n} {typical['variant']}"
+        base_source = f"Typical {track_n} {typical['variant']} ({STATE_LABELS[state]})"
         findings = [typical["notes"], "No session garage — used the track typical as a starting point."]
     else:
         setup = deepcopy(_fallback_setup())
-        base_source = "Generic baseline"
+        if is_wet_surface(state):
+            setup = apply_weather_overlay(setup, state)
+        base_source = f"Generic baseline ({STATE_LABELS[state]})"
         findings = ["No track typical or session setup — used a generic F1 26 baseline."]
+
+    banner = weather_banner(state)
+    if banner:
+        findings.insert(0, banner)
 
     if typical:
         for k, v in typical["setup"].items():
             setup.setdefault(k, v)
     for k, v in session_n.items():
-        setup.setdefault(k, v)
+        if not is_wet_surface(state):
+            setup.setdefault(k, v)
 
     changes: list[SetupChange] = []
+    lap_diag = diagnosis
     symptoms = analyze_practice_balance(df, lap=lap)
+    if lap_diag is not None and lap_diag.symptoms:
+        symptoms = lap_diag.symptoms
+    elif lap_diag is None and symptoms:
+        from .diagnosis import build_lap_diagnosis
+
+        lap_diag = build_lap_diagnosis(
+            df,
+            int(symptoms["lap"]),
+            ref_lap=None,
+            corner_cmp=corner_cmp,
+            conditions=conditions,
+            track=track,
+        )
+
     if not symptoms:
         return BuiltSetup(
             setup=setup,
@@ -476,7 +763,11 @@ def build_setup_from_practice(
             diagnosis="none",
         )
 
+    setup_before_changes = deepcopy(setup)
+
     findings.append(f"Tuned from practice lap {symptoms['lap']} ({symptoms['lap_time']:.3f}s).")
+    if lap_diag is not None:
+        findings.append(f"Engineer read: {lap_diag.headline}")
     if symptoms.get("temp_avg") is not None:
         findings.append(
             f"Corner tyre temps F {symptoms.get('temp_front', 0):.0f}°C / R {symptoms.get('temp_rear', 0):.0f}°C "
@@ -486,9 +777,9 @@ def build_setup_from_practice(
     issue = symptoms.get("issue", "balanced")
     phase = symptoms.get("issue_phase", "all")
     strength = symptoms.get("issue_strength", "mild")
-    diagnosis = f"{issue} ({phase}, {strength})" if issue != "balanced" else "balanced"
+    diag_label = f"{issue} ({phase}, {strength})" if issue != "balanced" else "balanced"
 
-    _brake_fix(setup, symptoms, changes, findings)
+    _brake_fix(setup, symptoms, changes, findings, conditions=state)
 
     if issue == "understeer":
         _apply_understeer(setup, phase, strength, changes, findings)
@@ -498,14 +789,32 @@ def build_setup_from_practice(
         _apply_mixed(setup, strength, changes, findings)
     else:
         findings.append("Balance looks even — no big aero/ARB swing.")
-        _aero_vs_typical(setup, typical, symptoms, changes, findings)
+        # Dry aero vs typical is misleading on a wet surface
+        if not is_wet_surface(state):
+            _aero_vs_typical(setup, typical, symptoms, changes, findings)
+        elif typical:
+            findings.append(f"{STATE_LABELS[state]}: keeping weather-oriented wing/ARB targets.")
 
-    _tyre_window(setup, symptoms, changes, findings)
+    _tyre_window(setup, symptoms, changes, findings, conditions=state)
 
     if variant == "race" and typical:
         _apply(setup, "fuel_setup", typical["setup"]["fuel_setup"], "Race fuel from track typical", changes)
     elif variant == "quali":
         _apply(setup, "fuel_setup", 5.0, "Quali fuel — garage minimum (5 kg)", changes)
+
+    pre_n = len([c for c in changes if c.key != "fuel_setup"])
+    changes = _enforce_change_budget(changes, max_groups=3)
+    post_n = len([c for c in changes if c.key != "fuel_setup"])
+    if post_n < pre_n:
+        setup = deepcopy(setup_before_changes)
+        _reapply_changes(setup, changes)
+        findings.append(
+            f"Kept {post_n} coordinated garage move(s) — brakes first, then one aero/mech lever, then diff/tyres."
+        )
+
+    # Final safety net after budget trim
+    _harmonize_mech(setup, changes, findings)
+    _clamp_brake_stability(setup, changes, findings, conditions=state)
 
     if "brake_bias_setup" in setup and "front_brake_bias" in setup:
         setup["front_brake_bias"] = setup["brake_bias_setup"]
@@ -513,8 +822,12 @@ def build_setup_from_practice(
     for pair in (FRONT_PRESS, REAR_PRESS, FRONT_RH, REAR_RH):
         _equalize_pair(setup, pair)
 
-    est_session = estimate_setup_delta(session_n, setup, track=track_n).total_dt if session_n else None
-    est_typical = estimate_setup_delta(typical["setup"], setup, track=track_n).total_dt if typical else None
+    est_session = (
+        estimate_setup_delta(session_n, setup, track=track_n, conditions=state).total_dt if session_n else None
+    )
+    est_typical = (
+        estimate_setup_delta(typical["setup"], setup, track=track_n, conditions=state).total_dt if typical else None
+    )
 
     mech = [c for c in changes if c.key != "fuel_setup"]
     if not mech:
@@ -529,7 +842,7 @@ def build_setup_from_practice(
         changes=changes,
         est_dt_vs_session=est_session,
         est_dt_vs_typical=est_typical,
-        diagnosis=diagnosis,
+        diagnosis=diag_label,
     )
 
 
@@ -552,9 +865,9 @@ def _fallback_setup() -> dict[str, float]:
         "susp_height_setup_1": 21.0,
         "susp_height_setup_2": 45.0,
         "susp_height_setup_3": 45.0,
-        "brake_bias_setup": 0.55,
-        "front_brake_bias": 0.55,
-        "brake_press_setup": 1.0,
+        "brake_bias_setup": 0.57,
+        "front_brake_bias": 0.57,
+        "brake_press_setup": 0.95,
         "tyre_press_setup_0": psi_to_pa(26.5),
         "tyre_press_setup_1": psi_to_pa(26.5),
         "tyre_press_setup_2": psi_to_pa(23.5),

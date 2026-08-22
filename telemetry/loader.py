@@ -83,9 +83,17 @@ def _derive_helpers(df: pd.DataFrame) -> pd.DataFrame:
     if all(f"wheel_slip_ratio_{i}" in df.columns for i in range(4)):
         slips = df[[f"wheel_slip_ratio_{i}" for i in range(4)]]
         df["slip_max"] = slips.abs().max(axis=1)
-        # Lock-up heuristic under braking
+        # Live order: 0=RL, 1=RR, 2=FL, 3=FR
+        rear_slip = slips[["wheel_slip_ratio_0", "wheel_slip_ratio_1"]].abs().max(axis=1)
+        front_slip = slips[["wheel_slip_ratio_2", "wheel_slip_ratio_3"]].abs().max(axis=1)
+        # Lock-up heuristic under braking (front vs rear matter for bias direction)
         if "brake" in df.columns:
-            df["lockup_risk"] = (df["brake"] > 0.3) & (df["slip_max"] > 0.08)
+            braking = df["brake"] > 0.28
+            df["lockup_front"] = braking & (front_slip > 0.08)
+            df["lockup_rear"] = braking & (rear_slip > 0.08)
+            df["lockup_risk"] = df["lockup_front"] | df["lockup_rear"]
+    elif "brake" in df.columns and "slip_max" in df.columns:
+        df["lockup_risk"] = (df["brake"] > 0.3) & (df["slip_max"] > 0.08)
 
     if "ers_store" in df.columns:
         # Normalize to MJ-ish scale for display when values are huge

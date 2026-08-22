@@ -13,8 +13,13 @@ import pandas as pd
 
 from .corners import analyze_lap_corners, normalize_track_name
 from .db import connect, get_session, load_session_telemetry
-from .metrics import build_lap_summary, get_lap, session_meta
-
+from .metrics import (
+    MAX_VALID_LAP_S,
+    MIN_VALID_LAP_S,
+    build_lap_summary,
+    get_lap,
+    session_meta,
+)
 
 PROGRESS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS personal_bests (
@@ -55,6 +60,81 @@ def ensure_progress_schema(app_root: Path | None = None) -> None:
         conn.executescript(PROGRESS_SCHEMA)
 
 
+def scrub_improbable_lap_records(app_root: Path | None = None) -> dict[str, int]:
+    """
+    Remove takeback / red-flag short laps from PB history and fix session bests.
+
+    Uses the same absolute time window as build_lap_summary (not distance —
+    stored lap rows no longer have telemetry).
+    """
+    ensure_progress_schema(app_root)
+    with connect(app_root) as conn:
+        pb_removed = conn.execute(
+            "DELETE FROM personal_bests WHERE lap_time < ? OR lap_time > ?",
+            (MIN_VALID_LAP_S, MAX_VALID_LAP_S),
+        ).rowcount
+
+        bad_sessions = conn.execute(
+            """
+            SELECT id FROM sessions
+            WHERE best_lap_time IS NOT NULL
+              AND (best_lap_time < ? OR best_lap_time > ?)
+            """,
+            (MIN_VALID_LAP_S, MAX_VALID_LAP_S),
+        ).fetchall()
+
+        sessions_fixed = 0
+        for row in bad_sessions:
+            sid = int(row["id"])
+            best = conn.execute(
+                """
+                SELECT lap, lap_time FROM laps
+                WHERE session_id = ? AND lap_time >= ? AND lap_time <= ?
+                ORDER BY lap_time ASC
+                LIMIT 1
+                """,
+                (sid, MIN_VALID_LAP_S, MAX_VALID_LAP_S),
+            ).fetchone()
+            conn.execute("UPDATE laps SET is_best = 0 WHERE session_id = ?", (sid,))
+            if best:
+                best_lap = int(best["lap"])
+                best_time = float(best["lap_time"])
+                conn.execute(
+                    "UPDATE sessions SET best_lap = ?, best_lap_time = ? WHERE id = ?",
+                    (best_lap, best_time, sid),
+                )
+                conn.execute(
+                    "UPDATE laps SET is_best = 1 WHERE session_id = ? AND lap = ?",
+                    (sid, best_lap),
+                )
+                conn.execute(
+                    "UPDATE laps SET delta_best = lap_time - ? WHERE session_id = ?",
+                    (best_time, sid),
+                )
+            else:
+                conn.execute(
+                    "UPDATE sessions SET best_lap = NULL, best_lap_time = NULL WHERE id = ?",
+                    (sid,),
+                )
+            sessions_fixed += 1
+
+        laps_removed = conn.execute(
+            "DELETE FROM laps WHERE lap_time < ? OR lap_time > ?",
+            (MIN_VALID_LAP_S, MAX_VALID_LAP_S),
+        ).rowcount
+
+    return {
+        "pb_removed": int(pb_removed or 0),
+        "sessions_fixed": int(sessions_fixed),
+        "laps_removed": int(laps_removed or 0),
+    }
+
+
+def _probable_times(series: pd.Series) -> pd.Series:
+    t = series.dropna().astype(float)
+    return t[(t >= MIN_VALID_LAP_S) & (t <= MAX_VALID_LAP_S)]
+
+
 def record_session_progress(
     session_id: int,
     df: pd.DataFrame,
@@ -81,6 +161,8 @@ def record_session_progress(
     best_row = summary.loc[summary["is_best"]].iloc[0]
     best_lap = int(best_row["lap"])
     best_time = float(best_row["lap_time"])
+    if best_time < MIN_VALID_LAP_S or best_time > MAX_VALID_LAP_S:
+        return {"pb_updated": False, "reason": "improbable best"}
     car = car_hint or meta.get("car") or session_row.get("car")
     length = (
         track_length_hint
@@ -147,7 +229,10 @@ def pb_history(track: str, app_root: Path | None = None) -> pd.DataFrame:
         ).fetchall()
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame([dict(r) for r in rows])
+    out = pd.DataFrame([dict(r) for r in rows])
+    return out.loc[
+        (out["lap_time"] >= MIN_VALID_LAP_S) & (out["lap_time"] <= MAX_VALID_LAP_S)
+    ].reset_index(drop=True)
 
 
 def set_track_goal(
@@ -242,21 +327,28 @@ def track_dossier(
     session_df = pd.DataFrame([dict(r) for r in sessions]) if sessions else pd.DataFrame()
     history = pd.DataFrame([dict(r) for r in pb_rows]) if pb_rows else pd.DataFrame()
 
+    if not history.empty and "lap_time" in history.columns:
+        history = history.loc[
+            (history["lap_time"] >= MIN_VALID_LAP_S) & (history["lap_time"] <= MAX_VALID_LAP_S)
+        ].reset_index(drop=True)
+
     best_time = float(history["lap_time"].min()) if not history.empty else None
     if best_time is None and not session_df.empty and session_df["best_lap_time"].notna().any():
-        best_time = float(session_df["best_lap_time"].min())
+        valid_sess = _probable_times(session_df["best_lap_time"])
+        best_time = float(valid_sess.min()) if not valid_sess.empty else None
 
-    # Consistency from recent session bests
+    # Consistency from recent session bests (probable times only)
     recent = session_df.head(8) if not session_df.empty else pd.DataFrame()
     consistency = None
-    if not recent.empty and recent["best_lap_time"].notna().sum() >= 2:
-        times = recent["best_lap_time"].dropna().astype(float)
-        consistency = {
-            "mean": float(times.mean()),
-            "std": float(times.std(ddof=0)),
-            "spread": float(times.max() - times.min()),
-            "n": int(len(times)),
-        }
+    if not recent.empty and recent["best_lap_time"].notna().sum() >= 1:
+        times = _probable_times(recent["best_lap_time"])
+        if len(times) >= 2:
+            consistency = {
+                "mean": float(times.mean()),
+                "std": float(times.std(ddof=0)),
+                "spread": float(times.max() - times.min()),
+                "n": int(len(times)),
+            }
 
     corners = []
     if latest_corners and latest_corners["corners_json"]:
@@ -331,7 +423,7 @@ def backfill_progress_from_library(app_root: Path | None = None) -> int:
         sid = int(row["id"])
         try:
             df = load_session_telemetry(sid, app_root)
-            summary = build_lap_summary(df)
+            summary = build_lap_summary(df, track_length=row.get("track_length"))
             result = record_session_progress(
                 sid,
                 df,
