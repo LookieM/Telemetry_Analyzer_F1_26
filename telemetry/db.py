@@ -12,6 +12,8 @@ from typing import Any, Iterator
 
 import pandas as pd
 
+from .loader import SETUP_CHANNEL_KEYS
+
 # Channels kept after import (drops ~250 unused SRT columns)
 COMPACT_COLUMNS = [
     "lap",
@@ -61,6 +63,7 @@ COMPACT_COLUMNS = [
     "tyre_press_1",
     "tyre_press_2",
     "tyre_press_3",
+    *SETUP_CHANNEL_KEYS,
 ]
 
 SCHEMA = """

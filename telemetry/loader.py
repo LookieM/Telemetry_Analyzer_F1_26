@@ -31,6 +31,34 @@ COLUMN_ALIASES: dict[str, list[str]] = {
 # Tyre / corner indexing in SRT: 0=RL, 1=RR, 2=FL, 3=FR (common game convention)
 TYRE_LABELS = ("RL", "RR", "FL", "FR")
 
+# Garage channels logged in SRT exports (also persisted in compact Parquet after import)
+SETUP_CHANNEL_KEYS: tuple[str, ...] = (
+    "fuel_setup",
+    "wing_setup_0",
+    "wing_setup_1",
+    "diff_onThrottle_setup",
+    "diff_offThrottle_setup",
+    "camber_setup_0",
+    "camber_setup_1",
+    "toe_setup_0",
+    "toe_setup_1",
+    "susp_spring_setup_0",
+    "susp_spring_setup_1",
+    "arb_setup_0",
+    "arb_setup_1",
+    "susp_height_setup_0",
+    "susp_height_setup_1",
+    "susp_height_setup_2",
+    "susp_height_setup_3",
+    "brake_bias_setup",
+    "brake_press_setup",
+    "front_brake_bias",
+    "tyre_press_setup_0",
+    "tyre_press_setup_1",
+    "tyre_press_setup_2",
+    "tyre_press_setup_3",
+)
+
 
 def list_local_csvs(folder: str | Path) -> list[Path]:
     root = Path(folder)
@@ -167,32 +195,7 @@ def _stable_setup_value(series: pd.Series) -> float:
 
 def mean_setup(df: pd.DataFrame) -> dict[str, float | int | str]:
     """Extract representative setup values from a session/lap slice."""
-    keys: Iterable[str] = [
-        "fuel_setup",
-        "wing_setup_0",
-        "wing_setup_1",
-        "diff_onThrottle_setup",
-        "diff_offThrottle_setup",
-        "camber_setup_0",
-        "camber_setup_1",
-        "toe_setup_0",
-        "toe_setup_1",
-        "susp_spring_setup_0",
-        "susp_spring_setup_1",
-        "arb_setup_0",
-        "arb_setup_1",
-        "susp_height_setup_0",
-        "susp_height_setup_1",
-        "susp_height_setup_2",
-        "susp_height_setup_3",
-        "brake_bias_setup",
-        "brake_press_setup",
-        "front_brake_bias",
-        "tyre_press_setup_0",
-        "tyre_press_setup_1",
-        "tyre_press_setup_2",
-        "tyre_press_setup_3",
-    ]
+    keys: Iterable[str] = SETUP_CHANNEL_KEYS
     out: dict[str, float | int | str] = {}
     for key in keys:
         if key in df.columns:
@@ -209,6 +212,89 @@ def mean_setup(df: pd.DataFrame) -> dict[str, float | int | str]:
     return out
 
 
+def telemetry_setup_keys(df: pd.DataFrame) -> list[str]:
+    """Setup columns present in this dataframe."""
+    return [k for k in SETUP_CHANNEL_KEYS if k in df.columns]
+
+
+def has_telemetry_setup(df: pd.DataFrame | None, *, min_keys: int = 6) -> bool:
+    """True when the export carries enough garage channels to trust."""
+    if df is None or df.empty:
+        return False
+    return len(telemetry_setup_keys(df)) >= min_keys
+
+
+def setup_from_telemetry(df: pd.DataFrame, lap: int | None = None) -> dict[str, float]:
+    """Garage dict read from setup channels on the focus lap (or whole session)."""
+    from .setup_tweaker import normalize_setup
+
+    if df is None or df.empty or not has_telemetry_setup(df):
+        return {}
+    slice_df = df
+    if lap is not None and "lap" in df.columns:
+        slice_df = df[df["lap"] == lap]
+        if slice_df.empty:
+            slice_df = df
+    return normalize_setup(mean_setup(slice_df))
+
+
+def _is_missing_setup_value(key: str, value: float | None) -> bool:
+    from .setup_tweaker import SETUP_PARAMS
+
+    if value is None:
+        return True
+    v = float(value)
+    if key.startswith("wing_setup"):
+        return v <= 0
+    for p in SETUP_PARAMS:
+        if p.key == key:
+            return v < p.min_v - 1e-6
+    return False
+
+
+def resolve_session_setup(
+    stored: dict[str, Any] | None,
+    df: pd.DataFrame | None = None,
+    lap: int | None = None,
+    *,
+    typical_setup: dict[str, float] | None = None,
+) -> tuple[dict[str, float], str]:
+    """
+    Merge stored setup_json with live telemetry garage channels.
+
+    Per-lap telemetry wins when present — that's the setup the car actually ran.
+    """
+    from .setup_tweaker import normalize_setup
+
+    tel = setup_from_telemetry(df, lap) if has_telemetry_setup(df) else {}
+    stored_n = normalize_setup(stored or {})
+
+    if tel:
+        merged = dict(stored_n)
+        merged.update(tel)
+        if lap is not None:
+            source = f"telemetry lap {lap}"
+        else:
+            source = "telemetry"
+    elif stored_n:
+        merged = dict(stored_n)
+        source = "imported setup_json"
+    else:
+        merged = {}
+        source = "none"
+
+    if typical_setup:
+        for key, val in typical_setup.items():
+            cur = merged.get(key)
+            if key not in merged or _is_missing_setup_value(key, cur):
+                merged[key] = float(val)
+
+    if "brake_bias_setup" in merged:
+        merged.setdefault("front_brake_bias", merged["brake_bias_setup"])
+
+    return normalize_setup(merged), source
+
+
 def repair_setup_from_telemetry(
     setup: dict[str, Any] | None,
     df: pd.DataFrame | None = None,
@@ -216,35 +302,6 @@ def repair_setup_from_telemetry(
     *,
     typical_setup: dict[str, float] | None = None,
 ) -> dict[str, float]:
-    """
-    Backfill zero/missing wings (and other keys) from lap telemetry or track typical.
-
-    Import stores setup_json from mean_setup(); row-zero bugs read as 0 wing.
-    """
-    from .setup_tweaker import normalize_setup
-
-    out = normalize_setup(setup or {})
-    wing_keys = ("wing_setup_0", "wing_setup_1")
-
-    slice_df = df
-    if df is not None and lap is not None and "lap" in df.columns:
-        slice_df = df[df["lap"] == lap]
-        if slice_df.empty:
-            slice_df = df
-
-    for key in wing_keys:
-        if out.get(key, 0) > 0:
-            continue
-        if slice_df is not None and key in slice_df.columns:
-            vals = slice_df[key].dropna()
-            if not vals.empty:
-                try:
-                    repaired = normalize_setup({key: _stable_setup_value(vals)}).get(key, 0)
-                except ValueError:
-                    repaired = 0
-                if repaired > 0:
-                    out[key] = repaired
-                    continue
-        if typical_setup and key in typical_setup and float(typical_setup[key]) > 0:
-            out[key] = float(typical_setup[key])
-    return out
+    """Backfill missing/zeroed garage keys from lap telemetry or track typical."""
+    resolved, _ = resolve_session_setup(setup, df, lap, typical_setup=typical_setup)
+    return resolved

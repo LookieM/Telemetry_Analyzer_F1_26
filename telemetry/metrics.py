@@ -343,5 +343,10 @@ def sample_at_distance(lap_df: pd.DataFrame, distance: float) -> dict:
 
 
 def setup_snapshot(df: pd.DataFrame, lap: int | None = None) -> dict:
+    from .loader import setup_from_telemetry
+
+    snap = setup_from_telemetry(df, lap)
+    if snap:
+        return snap
     slice_df = df if lap is None else df[df["lap"] == lap]
     return mean_setup(slice_df)

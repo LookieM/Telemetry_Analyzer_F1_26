@@ -725,14 +725,14 @@ def build_setup_from_practice(
     track typical, then apply a small diagnosis-led tweak.
     """
     from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
-    from .loader import repair_setup_from_telemetry
+    from .loader import resolve_session_setup
     from .track_setups import apply_weather_overlay
 
     track_n = normalize_track_name(track)
     state = _as_state(conditions)
     typical = get_typical_setup(track_n, variant, conditions=state)
     typical_setup = (typical or {}).get("setup")
-    session_n = repair_setup_from_telemetry(
+    session_n, setup_source = resolve_session_setup(
         session_setup,
         df,
         lap,
@@ -754,7 +754,7 @@ def build_setup_from_practice(
             ]
         else:
             base_source = "Your session setup"
-            findings = ["Started from the setup stored in this practice export."]
+            findings = [f"Started from the garage logged in telemetry ({setup_source})."]
     elif typical:
         setup = deepcopy(typical["setup"])
         base_source = f"Typical {track_n} {typical['variant']} ({STATE_LABELS[state]})"

@@ -58,7 +58,7 @@ from telemetry.track_catalog import TRACK_LENGTHS_M
 from telemetry.import_session import import_csv
 from telemetry.corner_engineer import render_corner_engineer_panel
 from telemetry.insights import Insight, compare_brake_markers, generate_insights
-from telemetry.loader import list_local_csvs, repair_setup_from_telemetry
+from telemetry.loader import list_local_csvs, resolve_session_setup
 from telemetry.metrics import (
     align_laps,
     build_lap_summary,
@@ -1333,15 +1333,6 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                     st.dataframe(disp, use_container_width=True, hide_index=True)
                     st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
 
-        setup = {}
-        if session.get("setup_json"):
-            try:
-                setup = json.loads(session["setup_json"])
-            except json.JSONDecodeError:
-                setup = setup_snapshot(df, focus_lap)
-        else:
-            setup = setup_snapshot(df, focus_lap)
-
         sid = int(session["id"])
         ui_id = f"sess_{sid}"
         state_key = f"setup_proposed_{sid}"
@@ -1375,13 +1366,20 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         typical_pack = get_typical_setup(setup_track, setup_variant.lower(), conditions=setup_conditions)
 
-        setup = repair_setup_from_telemetry(
-            setup,
+        stored_setup = {}
+        if session.get("setup_json"):
+            try:
+                stored_setup = json.loads(session["setup_json"])
+            except json.JSONDecodeError:
+                stored_setup = {}
+
+        setup, setup_source = resolve_session_setup(
+            stored_setup,
             df,
             focus_lap,
             typical_setup=(typical_pack or {}).get("setup"),
         )
-        baseline = normalize_setup(setup) if setup else {}
+        baseline = setup if setup else {}
         if state_key not in st.session_state:
             st.session_state[state_key] = dict(baseline) if baseline else {}
         c_load1, c_load2, c_load3 = st.columns(3)
@@ -1409,6 +1407,13 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         if typical_pack:
             st.caption(f"**{setup_track}** · {typical_pack['character']} — {typical_pack['notes']}")
+        if setup_source.startswith("telemetry"):
+            fw = baseline.get("wing_setup_0")
+            rw = baseline.get("wing_setup_1")
+            wing_txt = f"FW/RW {fw:.0f}/{rw:.0f}" if fw is not None and rw is not None else "garage channels"
+            st.caption(f"Session garage base: **{setup_source}** ({wing_txt}). Builder tweaks from this.")
+        elif baseline:
+            st.caption("Session garage base: imported setup snapshot (re-import CSV to refresh from telemetry).")
 
         if build_clicked:
             setup_ref = ref_lap if ref_lap != focus_lap else best_lap
@@ -1423,7 +1428,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             )
             built = build_setup_from_practice(
                 df,
-                setup,
+                baseline,
                 setup_track or track,
                 variant=setup_variant.lower(),
                 lap=focus_lap,
