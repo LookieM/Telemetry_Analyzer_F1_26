@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -147,6 +147,24 @@ def load_telemetry(filepath: str | Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def _stable_setup_value(series: pd.Series) -> float:
+    """
+    Robust garage value for a telemetry column.
+
+    SRT exports often log 0 on the first rows before setup channels settle;
+    median of the non-zero bulk matches what you had in the garage.
+    """
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if s.empty:
+        raise ValueError("empty setup series")
+    if len(s) == 1:
+        return float(s.iloc[0])
+    nonzero = s[s.abs() > 1e-9]
+    if len(nonzero) >= max(3, len(s) // 25):
+        s = nonzero
+    return float(s.median())
+
+
 def mean_setup(df: pd.DataFrame) -> dict[str, float | int | str]:
     """Extract representative setup values from a session/lap slice."""
     keys: Iterable[str] = [
@@ -180,7 +198,53 @@ def mean_setup(df: pd.DataFrame) -> dict[str, float | int | str]:
         if key in df.columns:
             val = df[key].dropna()
             if not val.empty:
-                out[key] = float(val.iloc[0])
+                try:
+                    out[key] = _stable_setup_value(val)
+                except ValueError:
+                    continue
     if "tyre_compound_0" in df.columns:
-        out["tyre_compound"] = int(df["tyre_compound_0"].dropna().iloc[0])
+        tc = df["tyre_compound_0"].dropna()
+        if not tc.empty:
+            out["tyre_compound"] = int(_stable_setup_value(tc))
+    return out
+
+
+def repair_setup_from_telemetry(
+    setup: dict[str, Any] | None,
+    df: pd.DataFrame | None = None,
+    lap: int | None = None,
+    *,
+    typical_setup: dict[str, float] | None = None,
+) -> dict[str, float]:
+    """
+    Backfill zero/missing wings (and other keys) from lap telemetry or track typical.
+
+    Import stores setup_json from mean_setup(); row-zero bugs read as 0 wing.
+    """
+    from .setup_tweaker import normalize_setup
+
+    out = normalize_setup(setup or {})
+    wing_keys = ("wing_setup_0", "wing_setup_1")
+
+    slice_df = df
+    if df is not None and lap is not None and "lap" in df.columns:
+        slice_df = df[df["lap"] == lap]
+        if slice_df.empty:
+            slice_df = df
+
+    for key in wing_keys:
+        if out.get(key, 0) > 0:
+            continue
+        if slice_df is not None and key in slice_df.columns:
+            vals = slice_df[key].dropna()
+            if not vals.empty:
+                try:
+                    repaired = normalize_setup({key: _stable_setup_value(vals)}).get(key, 0)
+                except ValueError:
+                    repaired = 0
+                if repaired > 0:
+                    out[key] = repaired
+                    continue
+        if typical_setup and key in typical_setup and float(typical_setup[key]) > 0:
+            out[key] = float(typical_setup[key])
     return out

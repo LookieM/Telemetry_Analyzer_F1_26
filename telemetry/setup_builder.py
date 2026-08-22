@@ -673,6 +673,41 @@ def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> Non
             setup["front_brake_bias"] = setup[c.key]
 
 
+def _guard_track_wings(
+    setup: dict[str, float],
+    typical: dict[str, Any] | None,
+    changes: list[SetupChange],
+    findings: list[str],
+) -> None:
+    """Never ship zero/min wings on high-DF circuits (Monaco, etc.)."""
+    if not typical:
+        return
+    char = str(typical.get("character") or "")
+    if char not in ("high_df", "medium_high"):
+        return
+    ts = typical.get("setup") or {}
+    floors = {
+        "wing_setup_0": max(0.0, float(ts.get("wing_setup_0", 40)) - 8),
+        "wing_setup_1": max(0.0, float(ts.get("wing_setup_1", 40)) - 8),
+    }
+    for key, floor in floors.items():
+        if key not in setup:
+            continue
+        cur = float(setup[key])
+        if cur >= floor:
+            continue
+        _apply(
+            setup,
+            key,
+            floor,
+            f"Floor {key.replace('_setup', '').replace('_', ' ')} for {typical.get('track', 'this track')} high-DF pack",
+            changes,
+        )
+        findings.append(
+            f"Wing read as {cur:.0f} in export — raised to {floor:.0f} for a high-downforce track."
+        )
+
+
 def build_setup_from_practice(
     df: pd.DataFrame,
     session_setup: dict[str, Any] | None,
@@ -690,12 +725,19 @@ def build_setup_from_practice(
     track typical, then apply a small diagnosis-led tweak.
     """
     from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
+    from .loader import repair_setup_from_telemetry
     from .track_setups import apply_weather_overlay
 
     track_n = normalize_track_name(track)
     state = _as_state(conditions)
     typical = get_typical_setup(track_n, variant, conditions=state)
-    session_n = normalize_setup(session_setup or {})
+    typical_setup = (typical or {}).get("setup")
+    session_n = repair_setup_from_telemetry(
+        session_setup,
+        df,
+        lap,
+        typical_setup=typical_setup,
+    )
 
     if prefer_typical_base and typical:
         setup = deepcopy(typical["setup"])
@@ -815,6 +857,7 @@ def build_setup_from_practice(
     # Final safety net after budget trim
     _harmonize_mech(setup, changes, findings)
     _clamp_brake_stability(setup, changes, findings, conditions=state)
+    _guard_track_wings(setup, typical, changes, findings)
 
     if "brake_bias_setup" in setup and "front_brake_bias" in setup:
         setup["front_brake_bias"] = setup["brake_bias_setup"]

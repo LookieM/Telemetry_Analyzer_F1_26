@@ -296,7 +296,26 @@ def _param_map() -> dict[str, SetupParam]:
     return {p.key: p for p in SETUP_PARAMS}
 
 
+def _coerce_setup_units(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map SRT fractional exports (0–1) to in-game garage units where needed."""
+    out = dict(raw)
+    fw, rw = out.get("wing_setup_0"), out.get("wing_setup_1")
+    try:
+        fw_f = float(fw) if fw is not None else None
+        rw_f = float(rw) if rw is not None else None
+    except (TypeError, ValueError):
+        return out
+    if fw_f is not None and rw_f is not None:
+        mx = max(abs(fw_f), abs(rw_f))
+        # Some exports store max wing as 1.0 instead of 50 clicks
+        if 0 < mx <= 1.05:
+            out["wing_setup_0"] = fw_f * 50.0
+            out["wing_setup_1"] = rw_f * 50.0
+    return out
+
+
 def normalize_setup(raw: dict[str, Any]) -> dict[str, float]:
+    raw = _coerce_setup_units(raw or {})
     out: dict[str, float] = {}
     for p in SETUP_PARAMS:
         if p.key in raw and raw[p.key] is not None:

@@ -58,7 +58,7 @@ from telemetry.track_catalog import TRACK_LENGTHS_M
 from telemetry.import_session import import_csv
 from telemetry.corner_engineer import render_corner_engineer_panel
 from telemetry.insights import Insight, compare_brake_markers, generate_insights
-from telemetry.loader import list_local_csvs
+from telemetry.loader import list_local_csvs, repair_setup_from_telemetry
 from telemetry.metrics import (
     align_laps,
     build_lap_summary,
@@ -1342,12 +1342,9 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         else:
             setup = setup_snapshot(df, focus_lap)
 
-        baseline = normalize_setup(setup) if setup else {}
         sid = int(session["id"])
         ui_id = f"sess_{sid}"
         state_key = f"setup_proposed_{sid}"
-        if state_key not in st.session_state:
-            st.session_state[state_key] = dict(baseline) if baseline else {}
 
         st.subheader("Setup builder")
         sess_wx = parse_track_state(session.get("conditions"))
@@ -1377,6 +1374,16 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             build_clicked = st.button("Build from this practice", type="primary", key=f"setup_build_{sid}")
 
         typical_pack = get_typical_setup(setup_track, setup_variant.lower(), conditions=setup_conditions)
+
+        setup = repair_setup_from_telemetry(
+            setup,
+            df,
+            focus_lap,
+            typical_setup=(typical_pack or {}).get("setup"),
+        )
+        baseline = normalize_setup(setup) if setup else {}
+        if state_key not in st.session_state:
+            st.session_state[state_key] = dict(baseline) if baseline else {}
         c_load1, c_load2, c_load3 = st.columns(3)
         if typical_pack and c_load1.button(
             f"Load typical {setup_track} {setup_variant}",
