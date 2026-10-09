@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from .balance import analyze_practice_balance
+from .compounds import c_label
 from .conditions import _as_state
 from .loader import has_telemetry_setup, resolve_session_setup
 from .metrics import build_lap_summary, fuel_corrected_time
@@ -25,6 +26,8 @@ FRESH_TYRE_DROP = 2.0
 # Laps used for the representative pace of a run (fastest share).
 PACE_SHARE = 0.6
 BALANCE_MAX_LAPS = 8
+# Lap classes (metrics.LAP_CLASSES) that never represent the car's pace on a run.
+NON_RUN_CLASSES = frozenset({"start", "in", "pit", "out", "invalid"})
 
 _STRENGTH_RANK = {"none": 0, "mild": 1, "medium": 2, "strong": 3}
 
@@ -175,8 +178,9 @@ def split_runs(
     """
     Group consecutive probable laps that share a mechanical setup, tyre compound and tyre set.
 
-    A gap in lap numbers (in/out lap, takeback), a refuel jump or a fresh-tyre wear reset
-    also starts a new run. Sessions without per-lap garage channels use the stored setup_json.
+    A gap in lap numbers (takeback), a refuel jump or a fresh tyre set also starts a new run.
+    Standing-start, in, pit, out and invalid laps are left out (and so split runs too).
+    Sessions without per-lap garage channels use the stored setup_json.
     """
     summary = build_lap_summary(df, track_length=track_length)
     if summary.empty:
@@ -198,13 +202,15 @@ def split_runs(
         cur_setups.clear()
 
     for _, row in summary.iterrows():
+        if row.get("lap_class") in NON_RUN_CLASSES:
+            continue  # the next kept lap is no longer consecutive, so it opens a new run
         lap = int(row["lap"])
         setup, _src = resolve_session_setup(stored, df, lap)
         fp = mech_fingerprint(setup) if per_lap_channels else prev_fp or mech_fingerprint(setup)
 
         new_run = prev is None
         if prev is not None:
-            if lap != int(prev["lap"]) + 1:
+            if lap != int(prev["lap"]) + 1 or bool(row.get("fresh_set")):
                 new_run = True
             elif fp != prev_fp:
                 new_run = True
@@ -253,7 +259,7 @@ def runs_frame(runs: list[Run]) -> pd.DataFrame:
                 "Run": r.idx + 1,
                 "Laps": f"{r.laps[0]}–{r.laps[-1]} ({r.n_laps})",
                 "Type": r.kind,
-                "Compound": r.compound,
+                "Compound": c_label(r.compound),
                 "Fuel (kg)": round(r.fuel_kg, 1) if r.fuel_kg is not None else None,
                 "Best": round(r.best_time, 3),
                 "Best (fuel-corr.)": round(r.best_corrected, 3),

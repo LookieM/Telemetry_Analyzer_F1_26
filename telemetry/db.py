@@ -8,13 +8,14 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
 
 import pandas as pd
 
 from .loader import SETUP_CHANNEL_KEYS
 
-# Channels kept after import (drops ~250 unused SRT columns)
+# Core channels every analysis relies on (always kept, fixed dtypes). Any other numeric export
+# channel that varies over the session is kept too — suspension, brakes, inner tyre temps, etc.
 COMPACT_COLUMNS = [
     "lap",
     "bin_index",
@@ -201,15 +202,31 @@ def init_db(app_root: Path | None = None) -> Path:
     return db_path(app_root)
 
 
+def _extra_channels(df: pd.DataFrame, core: list[str]) -> list[str]:
+    """
+    Every other numeric export channel. Constant ones are kept too: a session-long value
+    (weather, track temperature, a pit timer that stayed at 0) is information, and Parquet
+    stores a constant column in a few bytes.
+    """
+    return [
+        c
+        for c in df.columns
+        if c not in core and (pd.api.types.is_numeric_dtype(df[c]) or pd.api.types.is_bool_dtype(df[c]))
+    ]
+
+
 def compact_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in COMPACT_COLUMNS if c in df.columns]
-    out = df[cols].copy()
+    extra = _extra_channels(df, cols)
+    out = df[cols + extra].copy()
     # Downcast floats to save disk
     for c in out.select_dtypes(include=["float64"]).columns:
         out[c] = out[c].astype("float32")
     for c in out.select_dtypes(include=["int64"]).columns:
         if c in ("lap", "bin_index", "gear", "tyre_compound_0", "ers_deployMode", "drs"):
             out[c] = out[c].astype("int16")
+        elif c in extra:
+            out[c] = pd.to_numeric(out[c], downcast="integer")
     for c in ("lockup_risk", "coasting", "trail_braking"):
         if c in out.columns:
             out[c] = out[c].fillna(False).astype("bool")
@@ -286,7 +303,32 @@ def get_session_laps(session_id: int, app_root: Path | None = None) -> pd.DataFr
     return pd.DataFrame([dict(r) for r in rows])
 
 
-def load_session_telemetry(session_id: int, app_root: Path | None = None) -> pd.DataFrame:
+# What lap / stint / tyre / journal analysis reads. Background work (library-wide models,
+# journal scoring, progress) loads only these instead of all ~290 export channels.
+ANALYSIS_COLUMNS: tuple[str, ...] = (
+    *COMPACT_COLUMNS,
+    "trackLength",
+    "tyres_age",
+    "pit_status",
+    "pitStopTime",
+    "pitLaneTime",
+    "safetyCarStatus",
+    "lap_time_invalid",
+    "weather",
+    "track_temp",
+    "air_temp",
+    *(f"tyre_tempInternalAir_{i}" for i in range(4)),
+    *(f"brake_temp_{i}" for i in range(4)),
+)
+
+
+def load_session_telemetry(
+    session_id: int,
+    app_root: Path | None = None,
+    *,
+    columns: Iterable[str] | None = None,
+) -> pd.DataFrame:
+    """Stored telemetry; `columns` limits the read to those present (e.g. ANALYSIS_COLUMNS)."""
     session = get_session(session_id, app_root)
     if not session:
         raise FileNotFoundError(f"Session {session_id} not found")
@@ -294,7 +336,12 @@ def load_session_telemetry(session_id: int, app_root: Path | None = None) -> pd.
     path = root / session["telemetry_path"]
     if not path.exists():
         raise FileNotFoundError(f"Telemetry file missing: {path}")
-    return pd.read_parquet(path)
+    if columns is None:
+        return pd.read_parquet(path)
+    import pyarrow.parquet as pq
+
+    present = set(pq.read_schema(path).names)
+    return pd.read_parquet(path, columns=[c for c in dict.fromkeys(columns) if c in present])
 
 
 def get_track_outline(track: str, app_root: Path | None = None) -> dict[str, Any] | None:

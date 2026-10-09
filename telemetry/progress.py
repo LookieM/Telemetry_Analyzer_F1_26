@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .corners import analyze_lap_corners, normalize_track_name
-from .db import connect, get_session, load_session_telemetry
+from .db import ANALYSIS_COLUMNS, connect, get_session, load_session_telemetry
 from .metrics import (
     MAX_VALID_LAP_S,
     MIN_VALID_LAP_S,
@@ -76,7 +76,7 @@ def scrub_improbable_lap_records(app_root: Path | None = None) -> dict[str, int]
         for row in sessions:
             sid = int(row["id"])
             try:
-                df = load_session_telemetry(sid, app_root)
+                df = load_session_telemetry(sid, app_root, columns=ANALYSIS_COLUMNS)
             except Exception:
                 continue
             if df is None or df.empty or "lap" not in df.columns:
@@ -451,7 +451,7 @@ def backfill_progress_from_library(app_root: Path | None = None) -> int:
     for _, row in sessions.iterrows():
         sid = int(row["id"])
         try:
-            df = load_session_telemetry(sid, app_root)
+            df = load_session_telemetry(sid, app_root, columns=ANALYSIS_COLUMNS)
             summary = build_lap_summary(df, track_length=row.get("track_length"))
             result = record_session_progress(
                 sid,

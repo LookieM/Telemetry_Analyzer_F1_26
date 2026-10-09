@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .corners import analyze_lap_corners, resolve_corners
+from .framecache import per_frame
 from .metrics import build_lap_summary, get_lap
 
 # Heuristic labels for SRT ers_deployMode values observed in F1 26 dumps.
@@ -117,6 +118,7 @@ def lap_ers_summary(lap_df: pd.DataFrame) -> dict:
     return out
 
 
+@per_frame()
 def session_ers_table(df: pd.DataFrame) -> pd.DataFrame:
     """One row per valid lap with pace + ERS KPIs (practice gold)."""
     summary = build_lap_summary(df)
@@ -777,6 +779,7 @@ def overtake_timeline(lap_df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+@per_frame()
 def session_2026_table(df: pd.DataFrame) -> pd.DataFrame:
     """One row per valid lap with 2026 channel KPIs."""
     summary = build_lap_summary(df)

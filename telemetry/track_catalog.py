@@ -36,6 +36,64 @@ TRACK_LENGTHS_M: dict[str, float] = {
     "Yas Marina": 5281,
 }
 
+# Full Grand Prix distance in laps (a 50% game race is half of this, rounded up).
+RACE_LAPS_FULL: dict[str, int] = {
+    "Bahrain": 57,
+    "Jeddah": 50,
+    "Melbourne": 58,
+    "Suzuka": 53,
+    "Shanghai": 56,
+    "Miami": 57,
+    "Imola": 63,
+    "Monaco": 78,
+    "Montreal": 70,
+    "Barcelona": 66,
+    "Spielberg": 71,
+    "Silverstone": 52,
+    "Hungaroring": 70,
+    "Spa": 44,
+    "Zandvoort": 72,
+    "Monza": 53,
+    "Baku": 51,
+    "Singapore": 62,
+    "Austin": 56,
+    "Mexico City": 71,
+    "Interlagos": 71,
+    "Las Vegas": 50,
+    "Lusail": 57,
+    "Yas Marina": 58,
+}
+
+# Approximate green-flag pit-stop loss (s, lane + stop). Only a fallback: the strategy tool
+# measures the real loss from your race sessions when it has one.
+PIT_LOSS_FALLBACK_S: dict[str, float] = {
+    "Bahrain": 23.0,
+    "Jeddah": 20.0,
+    "Melbourne": 19.0,
+    "Suzuka": 22.5,
+    "Shanghai": 23.0,
+    "Miami": 21.0,
+    "Imola": 28.0,
+    "Monaco": 19.5,
+    "Montreal": 18.5,
+    "Barcelona": 22.0,
+    "Spielberg": 20.0,
+    "Silverstone": 20.0,
+    "Hungaroring": 21.0,
+    "Spa": 18.0,
+    "Zandvoort": 21.0,
+    "Monza": 24.0,
+    "Baku": 20.0,
+    "Singapore": 28.0,
+    "Austin": 20.0,
+    "Mexico City": 22.0,
+    "Interlagos": 21.0,
+    "Las Vegas": 20.0,
+    "Lusail": 26.0,
+    "Yas Marina": 22.0,
+}
+DEFAULT_PIT_LOSS_S = 22.0
+
 # Lowercase alias -> canonical name (SRT trackId variants).
 TRACK_ALIASES: dict[str, str] = {
     "bahrain": "Bahrain",

@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from .corners import analyze_lap_corners, compare_corners, normalize_track_name, resolve_corners
-from .db import get_session, load_session_telemetry
+from .db import ANALYSIS_COLUMNS, get_session, load_session_telemetry
 from .metrics import get_lap
 from .runs import Run, best_run, split_runs
 from .setup_history import diff_setups, list_track_sessions, mech_setup
@@ -214,7 +214,7 @@ def _cached_runs(app_root: str, session_id: int) -> tuple[Run, ...]:
     session = get_session(session_id, root)
     if not session:
         return ()
-    df = load_session_telemetry(session_id, root)
+    df = load_session_telemetry(session_id, root, columns=ANALYSIS_COLUMNS)
     return tuple(split_runs(df, session=session, track_length=session.get("track_length")))
 
 
@@ -247,8 +247,8 @@ def compare_sessions_runs(
             track = normalize_track_name(sess_b.get("track") or sess_a.get("track"))
             length = sess_b.get("track_length") or sess_a.get("track_length")
             corners = _corner_deltas(
-                load_session_telemetry(session_a_id, app_root),
-                load_session_telemetry(session_b_id, app_root),
+                load_session_telemetry(session_a_id, app_root, columns=ANALYSIS_COLUMNS),
+                load_session_telemetry(session_b_id, app_root, columns=ANALYSIS_COLUMNS),
                 run_a,
                 run_b,
                 track,

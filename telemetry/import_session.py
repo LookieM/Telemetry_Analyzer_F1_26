@@ -41,11 +41,14 @@ def import_csv(
     notes: str = "",
     session_type: str = "",
     conditions: str = "",
+    source_name: str | None = None,
 ) -> ImportResult:
     """
     Load a raw SRT CSV, store compact Parquet + SQLite metadata, optionally delete the CSV.
 
-    Typical size drop: ~226 MB race CSV → a few MB Parquet + DB rows.
+    Typical size drop: ~230 MB race CSV → ~70 MB Parquet with every numeric channel kept.
+    A blank session type / track state is inferred from the file name and the telemetry.
+    `source_name` overrides the stored file name (uploads land in a temp file).
     """
     root = app_root or Path(__file__).resolve().parent.parent
     path = Path(csv_path)
@@ -88,6 +91,13 @@ def import_csv(
     from .setup_history import compute_setup_fingerprint
 
     setup_fp = compute_setup_fingerprint(setup)
+    name = source_name or path.name
+    if not session_type or not conditions:
+        from .session_tags import infer_tags
+
+        auto_type, auto_cond = infer_tags(name, summary)
+        session_type = session_type or auto_type
+        conditions = conditions or auto_cond
     compact = compact_dataframe(df)
 
     data_dir = default_data_dir(root)
@@ -127,7 +137,7 @@ def import_csv(
 
     relpath = str(Path("data") / "sessions" / tel_name)
     session_id = insert_imported_session(
-        source_name=path.name,
+        source_name=name,
         source_hash=digest,
         meta=meta,
         summary=summary,
@@ -187,7 +197,7 @@ def import_csv(
     return ImportResult(
         session_id=session_id,
         already_existed=False,
-        source_name=path.name,
+        source_name=name,
         track=meta.get("track"),
         car=meta.get("car"),
         lap_count=len(summary),

@@ -23,6 +23,7 @@ from telemetry.corners import (
     resolve_corners,
 )
 from telemetry.db import (
+    ANALYSIS_COLUMNS,
     SESSION_TYPES,
     delete_session,
     ensure_session_meta_schema,
@@ -48,6 +49,7 @@ from telemetry.ers import (
 from telemetry.conditions import (
     STATE_LABELS,
     STATE_OPTIONS,
+    _as_state,
     compose_conditions,
     label_to_state,
     parse_track_state,
@@ -64,7 +66,6 @@ from telemetry.metrics import (
     build_lap_summary,
     compute_time_delta,
     get_lap,
-    sample_at_distance,
     sector_deltas,
     setup_snapshot,
 )
@@ -90,7 +91,7 @@ from telemetry.setup_builder import build_setup_from_practice, changes_frame
 from telemetry.coach import CoachItem, coach_feed_for_session, setup_followup_items, setup_summary_item
 from telemetry.diagnosis import build_session_diagnosis
 from telemetry.setup_history import backfill_setup_fingerprints, setup_timeline
-from telemetry.setup_eval import NOISE_FLOOR, load_session_runs
+from telemetry.setup_eval import NOISE_FLOOR, clear_run_cache, load_session_runs
 from telemetry.setup_journal_ui import (
     experiments_frame,
     render_compare_panel,
@@ -99,7 +100,14 @@ from telemetry.setup_journal_ui import (
 )
 from telemetry.setup_log import evaluate_all, followup_entries, load_history, save_recommendation
 from telemetry.runs import best_run
-from telemetry.setup_tweaker import normalize_setup, pa_to_psi
+from telemetry.lap_views import driver_trace
+from telemetry.ui.track_map import lap_map
+from telemetry.compounds import get_allocation
+from telemetry.strategy_ui import render_strategy
+from telemetry.session_tags import backfill_session_tags
+from telemetry.tyres import clear_cache as clear_tyre_cache
+from telemetry.tyres_ui import render_tyres_tab
+from telemetry.setup_tweaker import normalize_setup
 from telemetry.ers_2026_ui import render_2026_channels_panel, render_stint_windows_panel
 from telemetry.stint_coach import session_stint_table, stint_saving_insights
 from telemetry.track_setups import get_typical_setup, list_tracks_with_setups
@@ -269,9 +277,11 @@ st.markdown(
 APP_ROOT = Path(__file__).resolve().parent
 
 
-@st.cache_data(show_spinner=False)
+# cache_resource hands back the same frame every rerun (no pickle copy of ~160k rows), which also
+# lets the per-frame summary / lap caches in telemetry.metrics hit across reruns. Nothing mutates it.
+@st.cache_resource(show_spinner=False, max_entries=3)
 def cached_session_df(session_id: int, telemetry_path: str, stored_size: int) -> pd.DataFrame:
-    return load_session_telemetry(session_id, APP_ROOT)
+    return load_session_telemetry(session_id, APP_ROOT, columns=ANALYSIS_COLUMNS)
 
 
 def format_lap_time(seconds: float | None) -> str:
@@ -351,78 +361,21 @@ def render_insights(items: list[Insight] | list[dict]) -> None:
         )
 
 
-def distance_from_plotly_event(event) -> float | None:
-    """Extract lap distance from a Streamlit plotly selection event."""
-    if event is None:
-        return None
-    selection = getattr(event, "selection", None)
-    if selection is None and isinstance(event, dict):
-        selection = event.get("selection")
-    if selection is None:
-        return None
-    points = getattr(selection, "points", None)
-    if points is None and isinstance(selection, dict):
-        points = selection.get("points")
-    if not points:
-        return None
-    p = points[0]
-    if isinstance(p, dict):
-        cd = p.get("customdata")
-        if isinstance(cd, (list, tuple)) and cd:
-            try:
-                return float(cd[0])
-            except (TypeError, ValueError):
-                pass
-        if p.get("x") is not None:
-            try:
-                return float(p["x"])
-            except (TypeError, ValueError):
-                return None
-    else:
-        cd = getattr(p, "customdata", None)
-        if isinstance(cd, (list, tuple)) and cd:
-            try:
-                return float(cd[0])
-            except (TypeError, ValueError):
-                pass
-        x = getattr(p, "x", None)
-        if x is not None:
-            try:
-                return float(x)
-            except (TypeError, ValueError):
-                return None
-    return None
+CURSOR_KEY = "cursor_distance"
 
 
-def apply_map_cursor_pick(event, key: str = "cursor_distance") -> bool:
-    """If the plotly selection has a distance, pin the lap cursor and request rerun."""
-    picked = distance_from_plotly_event(event)
-    if picked is None:
-        return False
-    if abs(picked - float(st.session_state.get(key, 0.0))) > 0.75:
-        st.session_state[key] = float(picked)
-        st.rerun()
-    return True
+def pin_cursor(distance: float | None) -> None:
+    """
+    Pin the lap cursor from a map / chart click.
 
-
-def render_cursor_telemetry(lap_df: pd.DataFrame, distance: float, corner_name: str | None = None) -> None:
-    """Pinned-point channel readout (updates on click / scrub, not mid-hover)."""
-    sample = sample_at_distance(lap_df, distance)
-    st.markdown("**Telemetry at cursor**")
-    st.caption("Hover the map for a live tip · click to pin here")
-    if not sample:
-        st.write("No sample at this distance.")
+    The cursor slider owns CURSOR_KEY, which cannot be written once the slider exists in this
+    run — so the value waits under a pending key and is applied before the slider next run.
+    """
+    if distance is None:
         return
-    r1 = st.columns(4)
-    r1[0].metric("Distance", f"{sample.get('distance', distance):.0f} m")
-    r1[1].metric("Corner", corner_name or "—")
-    r1[2].metric("Speed", f"{sample['speed']:.1f} km/h" if "speed" in sample else "—")
-    r1[3].metric("Lap time", f"{sample['lap_time']:.3f}s" if "lap_time" in sample else "—")
-    r2 = st.columns(4)
-    r2[0].metric("Throttle", f"{sample['throttle'] * 100:.0f}%" if "throttle" in sample else "—")
-    r2[1].metric("Brake", f"{sample['brake'] * 100:.0f}%" if "brake" in sample else "—")
-    r2[2].metric("Gear", f"{sample['gear']:.0f}" if "gear" in sample else "—")
-    r2[3].metric("Steering", f"{sample['steering']:.2f}" if "steering" in sample else "—")
+    if abs(float(distance) - float(st.session_state.get(CURSOR_KEY, 0.0))) > 0.75:
+        st.session_state[f"{CURSOR_KEY}_pending"] = float(distance)
+        st.rerun()
 
 
 def sidebar_import() -> None:
@@ -430,6 +383,7 @@ def sidebar_import() -> None:
     local = list_local_csvs(APP_ROOT)
     src = st.radio("Source", ["Project folder", "Upload", "Custom path"], horizontal=True, key="import_src")
     path: Path | None = None
+    upload_name: str | None = None  # uploads go through a temp file; keep the real name
 
     if src == "Project folder":
         if local:
@@ -445,6 +399,7 @@ def sidebar_import() -> None:
             uploaded_tmp.parent.mkdir(parents=True, exist_ok=True)
             uploaded_tmp.write_bytes(up.getvalue())
             path = uploaded_tmp
+            upload_name = up.name
             st.caption(f"Upload size: {format_bytes(len(up.getvalue()))}")
     else:
         custom = st.text_input("Full path to CSV")
@@ -483,6 +438,7 @@ def sidebar_import() -> None:
                     notes=notes,
                     session_type=tag,
                     conditions=conditions,
+                    source_name=upload_name,
                 )
                 st.success(result.message)
                 st.session_state["selected_session_id"] = result.session_id
@@ -924,13 +880,16 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
 
         st.markdown("---")
         st.subheader("Lap cursor")
-        st.caption("Hover the map for channels · click map or graph to pin · scrub distance below.")
+        st.caption("Hover the map or any trace for live channels · click to pin · scrub distance below.")
         max_dist = float(track_length or 5408)
-        if "cursor_distance" not in st.session_state:
-            st.session_state["cursor_distance"] = 0.0
-        st.slider("Distance (m)", 0.0, max_dist, step=1.0, key="cursor_distance")
+        pending = st.session_state.pop(f"{CURSOR_KEY}_pending", None)
+        if pending is not None:
+            st.session_state[CURSOR_KEY] = min(max_dist, max(0.0, float(pending)))
+        # Clamp: a cursor from a longer track would break the slider after switching sessions.
+        st.session_state[CURSOR_KEY] = min(max_dist, max(0.0, float(st.session_state.get(CURSOR_KEY, 0.0))))
+        st.slider("Distance (m)", 0.0, max_dist, step=1.0, key=CURSOR_KEY)
 
-    cursor = float(st.session_state.get("cursor_distance", 0.0))
+    cursor = float(st.session_state.get(CURSOR_KEY, 0.0))
     corner_here = corner_at_distance(track, cursor, track_length, corners=corners)
 
     focus_row = summary.loc[summary["lap"] == focus_lap].iloc[0]
@@ -961,6 +920,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             "vs Session",
             "Single lap",
             "Tyres",
+            "Strategy",
             "ERS / 2026",
             "Setup / Stint",
             "Coach",
@@ -974,6 +934,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         tab_xsess,
         tab_single,
         tab_tyres,
+        tab_strategy,
         tab_ers,
         tab_setup,
         tab_coach,
@@ -1029,41 +990,48 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             show = summary.copy()
             show["lap_time"] = show["lap_time"].map(lambda x: f"{x:.3f}")
             show["delta_best"] = show["delta_best"].map(lambda x: f"{x:+.3f}")
-            cols = [c for c in ["lap", "lap_time", "delta_best", "vmax", "throttle_full_pct", "coast_pct", "fuel_used", "tyre_wear_avg", "compound", "lockup_samples"] if c in show.columns]
+            if "compound" in show.columns:
+                alloc = get_allocation(track, APP_ROOT)
+                show["compound"] = show["compound"].map(alloc.label)
+            cols = [c for c in ["lap", "lap_class", "lap_time", "delta_best", "vmax", "throttle_full_pct", "coast_pct", "fuel_used", "tyre_wear_avg", "compound", "lockup_samples"] if c in show.columns]
             st.dataframe(show[cols], use_container_width=True, hide_index=True)
 
+    ref_for_view = ref_df if focus_lap != ref_lap else None
+    lap_labels = {"cmp_label": f"L{focus_lap}", "ref_label": f"L{ref_lap}"}
+
     with tab_map:
-        color = "speed" if map_color == "delta" else map_color
-        m1, m2 = st.columns([1.2, 1])
+        m1, m2 = st.columns([1.15, 1])
         with m1:
-            map_event = st.plotly_chart(
-                plots.track_map(
+            pin_cursor(
+                lap_map(
                     focus_df,
-                    color=color,
-                    title=f"{track or 'Track'} — lap {focus_lap}",
+                    key=f"map_race_{sid}",
+                    ref_df=ref_for_view,
+                    color=map_color,
                     outline=outline,
-                    highlight_distance=cursor,
                     corners=corners,
-                ),
-                use_container_width=True,
-                key="chart_race_map_lap",
-                on_select="rerun",
-                selection_mode="points",
-            )
-            apply_map_cursor_pick(map_event)
-        with m2:
-            render_cursor_telemetry(
-                focus_df,
-                cursor,
-                corner_name=corner_here.name if corner_here else None,
-            )
-            st.plotly_chart(
-                plots.track_library_map(outline, title=f"{track or 'Track'} outline"),
-                use_container_width=True,
-                key="chart_race_map_outline",
+                    pinned_d=cursor,
+                    title=f"{track or 'Track'} — lap {focus_lap}"
+                    + (f" vs lap {ref_lap}" if ref_for_view is not None else ""),
+                    height=600,
+                    **lap_labels,
+                )
             )
             if corner_here:
-                st.caption(f"{corner_here.name} · {corner_here.start:.0f}–{corner_here.end:.0f} m")
+                st.caption(f"Pinned: {corner_here.name} · {corner_here.start:.0f}–{corner_here.end:.0f} m")
+        with m2:
+            pin_cursor(
+                driver_trace(
+                    focus_df,
+                    key=f"trace_race_{sid}",
+                    ref_df=ref_for_view,
+                    corners=corners,
+                    cursor=cursor,
+                    pane_height=105,
+                    **lap_labels,
+                )
+            )
+            st.caption("Drag on a trace to zoom every pane · double-click to reset.")
 
     with tab_corners:
         if focus_corners.empty:
@@ -1110,32 +1078,20 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             )
             m1, m2 = st.columns(2)
             with m1:
-                if map_color == "delta" and not aligned.empty:
-                    delta_event = st.plotly_chart(
-                        plots.delta_map(aligned, outline=outline),
-                        use_container_width=True,
-                        key="chart_compare_delta_map",
-                        on_select="rerun",
-                        selection_mode="points",
+                pin_cursor(
+                    lap_map(
+                        focus_df,
+                        key=f"map_cmp_{sid}",
+                        ref_df=ref_df,
+                        color=map_color,
+                        outline=outline,
+                        corners=corners,
+                        pinned_d=cursor,
+                        title=f"Lap {focus_lap} vs lap {ref_lap} — colour: {map_color}",
+                        height=480,
+                        **lap_labels,
                     )
-                    apply_map_cursor_pick(delta_event)
-                else:
-                    color = map_color if map_color != "delta" else "speed"
-                    cmp_map_event = st.plotly_chart(
-                        plots.track_map(
-                            focus_df,
-                            color=color,
-                            title=f"Lap {focus_lap}",
-                            outline=outline,
-                            highlight_distance=cursor,
-                            corners=corners,
-                        ),
-                        use_container_width=True,
-                        key="chart_compare_track_map",
-                        on_select="rerun",
-                        selection_mode="points",
-                    )
-                    apply_map_cursor_pick(cmp_map_event)
+                )
             with m2:
                 st.plotly_chart(plots.sector_bar(sectors), use_container_width=True, key="chart_compare_sectors")
                 if not mini.empty:
@@ -1149,16 +1105,16 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                         hide_index=True,
                         height=280,
                     )
-            event = st.plotly_chart(
-                plots.telemetry_overlay(
-                    aligned, f"L{ref_lap}", f"L{focus_lap}", corners=corners, highlight_distance=cursor
-                ),
-                use_container_width=True,
-                key="chart_compare_overlay",
-                on_select="rerun",
-                selection_mode="points",
+            pin_cursor(
+                driver_trace(
+                    focus_df,
+                    key=f"trace_cmp_{sid}",
+                    ref_df=ref_df,
+                    corners=corners,
+                    cursor=cursor,
+                    **lap_labels,
+                )
             )
-            apply_map_cursor_pick(event)
 
     with tab_xsess:
         st.caption(
@@ -1170,52 +1126,53 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
     with tab_single:
         col_a, col_b = st.columns([1.1, 1.4])
         with col_a:
-            color = "speed" if map_color == "delta" else map_color
-            single_map_event = st.plotly_chart(
-                plots.track_map(
+            pin_cursor(
+                lap_map(
                     focus_df,
-                    color=color,
-                    title=f"Lap {focus_lap}",
+                    key=f"map_single_{sid}",
+                    color=map_color,
                     outline=outline,
-                    highlight_distance=cursor,
                     corners=corners,
-                ),
-                use_container_width=True,
-                key="chart_single_track_map",
-                on_select="rerun",
-                selection_mode="points",
-            )
-            apply_map_cursor_pick(single_map_event)
-            render_cursor_telemetry(
-                focus_df,
-                cursor,
-                corner_name=corner_here.name if corner_here else None,
+                    pinned_d=cursor,
+                    title=f"Lap {focus_lap}",
+                    height=460,
+                    cmp_label=f"L{focus_lap}",
+                )
             )
             st.plotly_chart(plots.gg_diagram(focus_df), use_container_width=True, key="chart_single_gg")
         with col_b:
-            event = st.plotly_chart(
-                plots.single_lap_telemetry(focus_df, corners=corners, highlight_distance=cursor),
-                use_container_width=True,
-                key="chart_single_telemetry",
-                on_select="rerun",
-                selection_mode="points",
+            pin_cursor(
+                driver_trace(focus_df, key=f"trace_single_{sid}", corners=corners, cursor=cursor, cmp_label=f"L{focus_lap}")
             )
-            apply_map_cursor_pick(event)
-            st.caption("Hover the map for channels · click map or graph to pin the cursor.")
+            st.caption("Hover the map or a trace for live channels · click to pin · drag to zoom, double-click to reset.")
 
     with tab_tyres:
-        t1, t2 = st.columns([1.5, 1])
-        with t1:
-            st.plotly_chart(plots.tyre_temps_plot(focus_df), use_container_width=True, key="chart_tyre_temps")
-        with t2:
-            st.plotly_chart(plots.tyre_wear_bars(focus_df), use_container_width=True, key="chart_tyre_wear")
-        if all(f"tyre_press_{i}" in focus_df.columns for i in range(4)):
-            pcols = st.columns(4)
-            for i, lab in enumerate(["RL", "RR", "FL", "FR"]):
-                raw = float(focus_df[f"tyre_press_{i}"].mean())
-                # SRT live pressures are Pascals; show psi to match the garage
-                psi = pa_to_psi(raw) if raw > 5000 else raw
-                pcols[i].metric(lab, f"{psi:.1f} psi")
+        pin_cursor(
+            render_tyres_tab(
+                session,
+                df,
+                summary,
+                focus_lap=focus_lap,
+                focus_df=focus_df,
+                corners=corners,
+                cursor=cursor,
+                app_root=APP_ROOT,
+            )
+        )
+
+    with tab_strategy:
+        if track:
+            render_strategy(
+                track,
+                _as_state(session.get("conditions")),
+                APP_ROOT,
+                key=f"strat_{sid}",
+                session=session,
+                summary=summary,
+                df=df,
+            )
+        else:
+            st.info("Track unknown for this session — use the Strategy planner in the sidebar.")
 
     with tab_ers:
         st.caption(
@@ -1713,6 +1670,27 @@ def render_garage() -> None:
     )
 
 
+def render_strategy_planner() -> None:
+    """Race strategy for any calendar track, built from every library session on it."""
+    st.subheader("Strategy planner")
+    st.caption(
+        "Compound model, stop count, pit windows and safety-car calls from all your sessions on a track. "
+        "Tracks you have not raced start from a manual model you fill in."
+    )
+    raced = sorted({name for t in list_tracks(APP_ROOT) if (name := normalize_track_name(t))})
+    tracks = raced + [t for t in TRACK_LENGTHS_M if t not in raced]
+    p1, p2 = st.columns([1.4, 1])
+    track = p1.selectbox(
+        "Track",
+        tracks,
+        key="planner_track",
+        format_func=lambda t: f"{t}  · raced" if t in raced else t,
+    )
+    wx = p2.selectbox("Track state", STATE_OPTIONS, index=0, key="planner_state")
+    state = label_to_state(wx)
+    render_strategy(track, state, APP_ROOT, key=f"planner_{track}_{state}")
+
+
 def main() -> None:
     init_db(APP_ROOT)
     ensure_progress_schema(APP_ROOT)
@@ -1736,6 +1714,12 @@ def main() -> None:
             st.session_state["progress_backfilled"] = n
     if "setup_fp_backfilled" not in st.session_state:
         st.session_state["setup_fp_backfilled"] = backfill_setup_fingerprints(APP_ROOT)
+    if "session_tags_backfilled" not in st.session_state:
+        # Blank type / track state only — tags you set are never touched.
+        st.session_state["session_tags_backfilled"] = backfill_session_tags(APP_ROOT)
+        if st.session_state["session_tags_backfilled"]:
+            st.cache_data.clear()
+            clear_tyre_cache()
     if "setup_journal_evaluated" not in st.session_state:
         with st.spinner("Scoring setup experiments…"):
             st.session_state["setup_journal_evaluated"] = evaluate_all(APP_ROOT)
@@ -1747,7 +1731,7 @@ def main() -> None:
     s3.metric("Library size", format_bytes(stats["stored_bytes"]))
     s4.metric("CSV space saved", format_bytes(max(0, stats["saved_bytes"])))
 
-    modes = ["Browse sessions", "Track dossier", "Garage", "Import CSV"]
+    modes = ["Browse sessions", "Track dossier", "Garage", "Strategy planner", "Import CSV"]
     if "sidebar_mode" not in st.session_state:
         st.session_state["sidebar_mode"] = "Browse sessions"
     # Honour dossier → Garage navigation
@@ -1764,7 +1748,7 @@ def main() -> None:
         if mode == "Import CSV":
             sidebar_import()
             st.stop()
-        if mode in ("Track dossier", "Garage"):
+        if mode in ("Track dossier", "Garage", "Strategy planner"):
             pass  # rendered below
         else:
             session = pick_session()
@@ -1779,6 +1763,8 @@ def main() -> None:
                 st.session_state.pop("selected_session_id", None)
                 st.session_state.pop("setup_journal_evaluated", None)
                 st.cache_data.clear()
+                clear_tyre_cache()
+                clear_run_cache()
                 st.rerun()
 
     if mode == "Track dossier":
@@ -1787,6 +1773,10 @@ def main() -> None:
 
     if mode == "Garage":
         render_garage()
+        return
+
+    if mode == "Strategy planner":
+        render_strategy_planner()
         return
 
     with st.spinner("Loading compact telemetry…"):

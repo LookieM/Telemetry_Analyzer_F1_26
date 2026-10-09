@@ -14,7 +14,7 @@ from .corners import (
     normalize_track_name,
     resolve_corners,
 )
-from .db import get_session, load_session_telemetry
+from .db import ANALYSIS_COLUMNS, get_session, load_session_telemetry
 from .metrics import align_laps, build_lap_summary, compute_time_delta, get_lap
 from .progress import ensure_progress_schema, pb_history
 
@@ -99,8 +99,8 @@ def compare_sessions(
     if not ref_session:
         raise FileNotFoundError(f"Reference session {ref_session_id} not found")
 
-    focus_df_all = load_session_telemetry(focus_session_id, app_root)
-    ref_df_all = load_session_telemetry(ref_session_id, app_root)
+    focus_df_all = load_session_telemetry(focus_session_id, app_root, columns=ANALYSIS_COLUMNS)
+    ref_df_all = load_session_telemetry(ref_session_id, app_root, columns=ANALYSIS_COLUMNS)
     focus_summary = build_lap_summary(focus_df_all)
     ref_summary = build_lap_summary(ref_df_all)
     if focus_summary.empty or ref_summary.empty:

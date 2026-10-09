@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .coach_constants import LOCKUP_BRAKE_THRESHOLD
+from .framecache import per_frame
 from .metrics import build_lap_summary, get_lap
 
 
@@ -48,6 +49,7 @@ def _temp_balance(lap_df: pd.DataFrame) -> dict | None:
     }
 
 
+@per_frame()
 def session_stint_table(df: pd.DataFrame) -> pd.DataFrame:
     summary = build_lap_summary(df)
     if summary.empty:

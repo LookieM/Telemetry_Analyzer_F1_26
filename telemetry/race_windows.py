@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from .framecache import per_frame
 from .metrics import build_lap_summary, get_lap
 from .stint_coach import StintTip, session_stint_table
 
@@ -60,9 +61,13 @@ def _valid_stint_rows(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def _detect_stint_segments(summary: pd.DataFrame, wear_reset_drop: float = 15.0) -> list[list[int]]:
-    """Split race into stints when cumulative tyre wear resets (pit)."""
+    """Split race into stints on new tyre sets (tyres.tyre_stints); wear-reset fallback for bare summaries."""
     if summary.empty or "lap" not in summary.columns:
         return []
+    if "fresh_set" in summary.columns:
+        from .tyres import tyre_stints
+
+        return [s.laps for s in tyre_stints(summary)]
     laps = summary.sort_values("lap")
     if "tyre_wear_avg" not in laps.columns or laps["tyre_wear_avg"].isna().all():
         return [laps["lap"].astype(int).tolist()]
@@ -292,6 +297,7 @@ def build_window_projection(
     return pd.DataFrame(rows)
 
 
+@per_frame()
 def analyze_stint_windows(
     df: pd.DataFrame,
     target_laps: int | None = None,
