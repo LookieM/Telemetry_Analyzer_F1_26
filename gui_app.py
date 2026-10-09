@@ -911,6 +911,7 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
     ref_corners = analyze_lap_corners(ref_df, track, track_length, corners=corners)
     corner_cmp = compare_corners(focus_corners, ref_corners)
 
+    # Only the selected tab executes (on_change="rerun"); a click no longer recomputes all of them.
     tabs = st.tabs(
         [
             "Session",
@@ -924,7 +925,9 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             "ERS / 2026",
             "Setup / Stint",
             "Coach",
-        ]
+        ],
+        key="analysis_tab",
+        on_change="rerun",
     )
     (
         tab_overview,
@@ -941,654 +944,665 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
     ) = tabs
 
     with tab_overview:
-        left, right = st.columns([1.4, 1])
-        with left:
-            st.plotly_chart(plots.pace_chart(summary), use_container_width=True, key="chart_pace")
-            st.plotly_chart(plots.fuel_tyre_stint(summary), use_container_width=True, key="chart_stint")
-        with right:
-            st.subheader("Storage")
-            st.write(
-                f"Original CSV **{format_bytes(session.get('original_size_bytes'))}** → "
-                f"library **{format_bytes(session.get('stored_size_bytes'))}**"
-            )
-            st.subheader("Tags")
-            type_opts = ["(untagged)"] + list(SESSION_TYPES)
-            cur_type = session.get("session_type") or ""
-            type_idx = type_opts.index(cur_type) if cur_type in type_opts else 0
-            edit_type = st.selectbox("Session type", type_opts, index=type_idx, key=f"sess_type_{session['id']}")
-            cur_state, cur_wx_notes = split_conditions(session.get("conditions") or "")
-            wx_i = STATE_OPTIONS.index(STATE_LABELS[cur_state])
-            edit_wx = st.selectbox(
-                "Track state",
-                STATE_OPTIONS,
-                index=wx_i,
-                key=f"sess_wx_{session['id']}",
-            )
-            edit_cond_notes = st.text_input(
-                "Conditions notes",
-                value=cur_wx_notes,
-                key=f"sess_cond_{session['id']}",
-            )
-            edit_cond = compose_conditions(label_to_state(edit_wx), edit_cond_notes)
-            notes = st.text_area("Notes", value=session.get("notes") or "", height=100)
-            if st.button("Save tags & notes", key=f"save_tags_{session['id']}"):
-                update_session_tags(
-                    int(session["id"]),
-                    session_type="" if edit_type == "(untagged)" else edit_type,
-                    conditions=edit_cond,
-                    notes=notes,
-                    app_root=APP_ROOT,
+        if tab_overview.open:  # lazy tab: only the selected one runs
+            left, right = st.columns([1.4, 1])
+            with left:
+                st.plotly_chart(plots.pace_chart(summary), use_container_width=True, key="chart_pace")
+                st.plotly_chart(plots.fuel_tyre_stint(summary), use_container_width=True, key="chart_stint")
+            with right:
+                st.subheader("Storage")
+                st.write(
+                    f"Original CSV **{format_bytes(session.get('original_size_bytes'))}** → "
+                    f"library **{format_bytes(session.get('stored_size_bytes'))}**"
                 )
-                st.success("Saved.")
-                st.cache_data.clear()
-                st.rerun()
-            if session.get("setup_fingerprint"):
-                st.caption(f"Setup fingerprint: `{session['setup_fingerprint']}`")
-            banner = weather_banner(cur_state)
-            if banner:
-                st.info(banner)
-            show = summary.copy()
-            show["lap_time"] = show["lap_time"].map(lambda x: f"{x:.3f}")
-            show["delta_best"] = show["delta_best"].map(lambda x: f"{x:+.3f}")
-            if "compound" in show.columns:
-                alloc = get_allocation(track, APP_ROOT)
-                show["compound"] = show["compound"].map(alloc.label)
-            cols = [c for c in ["lap", "lap_class", "lap_time", "delta_best", "vmax", "throttle_full_pct", "coast_pct", "fuel_used", "tyre_wear_avg", "compound", "lockup_samples"] if c in show.columns]
-            st.dataframe(show[cols], use_container_width=True, hide_index=True)
+                st.subheader("Tags")
+                type_opts = ["(untagged)"] + list(SESSION_TYPES)
+                cur_type = session.get("session_type") or ""
+                type_idx = type_opts.index(cur_type) if cur_type in type_opts else 0
+                edit_type = st.selectbox("Session type", type_opts, index=type_idx, key=f"sess_type_{session['id']}")
+                cur_state, cur_wx_notes = split_conditions(session.get("conditions") or "")
+                wx_i = STATE_OPTIONS.index(STATE_LABELS[cur_state])
+                edit_wx = st.selectbox(
+                    "Track state",
+                    STATE_OPTIONS,
+                    index=wx_i,
+                    key=f"sess_wx_{session['id']}",
+                )
+                edit_cond_notes = st.text_input(
+                    "Conditions notes",
+                    value=cur_wx_notes,
+                    key=f"sess_cond_{session['id']}",
+                )
+                edit_cond = compose_conditions(label_to_state(edit_wx), edit_cond_notes)
+                notes = st.text_area("Notes", value=session.get("notes") or "", height=100)
+                if st.button("Save tags & notes", key=f"save_tags_{session['id']}"):
+                    update_session_tags(
+                        int(session["id"]),
+                        session_type="" if edit_type == "(untagged)" else edit_type,
+                        conditions=edit_cond,
+                        notes=notes,
+                        app_root=APP_ROOT,
+                    )
+                    st.success("Saved.")
+                    st.cache_data.clear()
+                    st.rerun()
+                if session.get("setup_fingerprint"):
+                    st.caption(f"Setup fingerprint: `{session['setup_fingerprint']}`")
+                banner = weather_banner(cur_state)
+                if banner:
+                    st.info(banner)
+                show = summary.copy()
+                show["lap_time"] = show["lap_time"].map(lambda x: f"{x:.3f}")
+                show["delta_best"] = show["delta_best"].map(lambda x: f"{x:+.3f}")
+                if "compound" in show.columns:
+                    alloc = get_allocation(track, APP_ROOT)
+                    show["compound"] = show["compound"].map(alloc.label)
+                cols = [c for c in ["lap", "lap_class", "lap_time", "delta_best", "vmax", "throttle_full_pct", "coast_pct", "fuel_used", "tyre_wear_avg", "compound", "lockup_samples"] if c in show.columns]
+                st.dataframe(show[cols], use_container_width=True, hide_index=True)
 
     ref_for_view = ref_df if focus_lap != ref_lap else None
     lap_labels = {"cmp_label": f"L{focus_lap}", "ref_label": f"L{ref_lap}"}
 
     with tab_map:
-        m1, m2 = st.columns([1.15, 1])
-        with m1:
-            pin_cursor(
-                lap_map(
-                    focus_df,
-                    key=f"map_race_{sid}",
-                    ref_df=ref_for_view,
-                    color=map_color,
-                    outline=outline,
-                    corners=corners,
-                    pinned_d=cursor,
-                    title=f"{track or 'Track'} — lap {focus_lap}"
-                    + (f" vs lap {ref_lap}" if ref_for_view is not None else ""),
-                    height=600,
-                    **lap_labels,
-                )
-            )
-            if corner_here:
-                st.caption(f"Pinned: {corner_here.name} · {corner_here.start:.0f}–{corner_here.end:.0f} m")
-        with m2:
-            pin_cursor(
-                driver_trace(
-                    focus_df,
-                    key=f"trace_race_{sid}",
-                    ref_df=ref_for_view,
-                    corners=corners,
-                    cursor=cursor,
-                    pane_height=105,
-                    **lap_labels,
-                )
-            )
-            st.caption("Drag on a trace to zoom every pane · double-click to reset.")
-
-    with tab_corners:
-        if focus_corners.empty:
-            st.warning("No corners available for this track yet.")
-        else:
-            source = "catalog" if normalize_track_name(track) in list_supported_tracks() else "auto-detected from this lap"
-            st.caption(f"Corner model: **{source}**. Positive Δ = slower than reference.")
-            st.plotly_chart(
-                plots.corner_delta_bars(corner_cmp if focus_lap != ref_lap else focus_corners.assign(delta_s=0.0)),
-                use_container_width=True,
-                key="chart_corner_bars",
-            )
-            if focus_lap != ref_lap and not corner_cmp.empty and "delta_s" in corner_cmp.columns:
-                # [P1 engineer] phase metrics + sentences — see telemetry.corner_engineer
-                render_corner_engineer_panel(corner_cmp, title="Engineer — corner phases", top_n=3)
-                if not aligned.empty and all(
-                    c in aligned.columns for c in ("ref_brake", "cmp_brake", "ref_speed", "cmp_speed", "lap_distance")
-                ):
-                    markers = compare_brake_markers(aligned)
-                    flagged = [m for m in markers if m.get("flagged")]
-                    if flagged:
-                        st.subheader("Brake markers vs reference")
-                        for m in sorted(flagged, key=lambda x: abs(x["delta_m"]), reverse=True)[:5]:
-                            when = "later" if m["delta_m"] > 0 else "earlier"
-                            st.markdown(
-                                f"- **{m['cmp_onset_m']:.0f} m**: {abs(m['delta_m']):.0f} m {when} than ref "
-                                f"(ref {m['ref_onset_m']:.0f} m · approach ~{m['approach_speed']:.0f} km/h)"
-                            )
-            else:
-                table = focus_corners.copy()
-                for col in ("time_s", "vmin", "brake_point_m", "turn_in_speed", "exit_speed", "throttle_on_m", "trail_brake_s"):
-                    if col in table.columns:
-                        table[col] = table[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
-                st.dataframe(table, use_container_width=True, hide_index=True)
-
-    with tab_compare:
-        if focus_lap == ref_lap:
-            st.info("Pick a different reference lap to see deltas and overlays.")
-        else:
-            final_delta = float(aligned["delta_time"].iloc[-1]) if not aligned.empty else 0.0
-            st.markdown(
-                f"**Lap {focus_lap}** vs **Lap {ref_lap}** → "
-                f"{abs(final_delta):.3f}s {'slower' if final_delta > 0 else 'faster'}"
-            )
-            m1, m2 = st.columns(2)
+        if tab_map.open:  # lazy tab: only the selected one runs
+            m1, m2 = st.columns([1.15, 1])
             with m1:
                 pin_cursor(
                     lap_map(
                         focus_df,
-                        key=f"map_cmp_{sid}",
-                        ref_df=ref_df,
+                        key=f"map_race_{sid}",
+                        ref_df=ref_for_view,
                         color=map_color,
                         outline=outline,
                         corners=corners,
                         pinned_d=cursor,
-                        title=f"Lap {focus_lap} vs lap {ref_lap} — colour: {map_color}",
-                        height=480,
+                        title=f"{track or 'Track'} — lap {focus_lap}"
+                        + (f" vs lap {ref_lap}" if ref_for_view is not None else ""),
+                        height=600,
                         **lap_labels,
                     )
                 )
+                if corner_here:
+                    st.caption(f"Pinned: {corner_here.name} · {corner_here.start:.0f}–{corner_here.end:.0f} m")
             with m2:
-                st.plotly_chart(plots.sector_bar(sectors), use_container_width=True, key="chart_compare_sectors")
-                if not mini.empty:
-                    st.dataframe(
-                        mini.assign(
-                            delta_s=mini["delta_s"].map(lambda x: f"{x:+.3f}"),
-                            dist_start=mini["dist_start"].map(lambda x: f"{x:.0f}"),
-                            dist_end=mini["dist_end"].map(lambda x: f"{x:.0f}"),
-                        ),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=280,
+                pin_cursor(
+                    driver_trace(
+                        focus_df,
+                        key=f"trace_race_{sid}",
+                        ref_df=ref_for_view,
+                        corners=corners,
+                        cursor=cursor,
+                        pane_height=105,
+                        **lap_labels,
                     )
-            pin_cursor(
-                driver_trace(
-                    focus_df,
-                    key=f"trace_cmp_{sid}",
-                    ref_df=ref_df,
-                    corners=corners,
-                    cursor=cursor,
-                    **lap_labels,
                 )
-            )
+                st.caption("Drag on a trace to zoom every pane · double-click to reset.")
+
+    with tab_corners:
+        if tab_corners.open:  # lazy tab: only the selected one runs
+            if focus_corners.empty:
+                st.warning("No corners available for this track yet.")
+            else:
+                source = "catalog" if normalize_track_name(track) in list_supported_tracks() else "auto-detected from this lap"
+                st.caption(f"Corner model: **{source}**. Positive Δ = slower than reference.")
+                st.plotly_chart(
+                    plots.corner_delta_bars(corner_cmp if focus_lap != ref_lap else focus_corners.assign(delta_s=0.0)),
+                    use_container_width=True,
+                    key="chart_corner_bars",
+                )
+                if focus_lap != ref_lap and not corner_cmp.empty and "delta_s" in corner_cmp.columns:
+                    # [P1 engineer] phase metrics + sentences — see telemetry.corner_engineer
+                    render_corner_engineer_panel(corner_cmp, title="Engineer — corner phases", top_n=3)
+                    if not aligned.empty and all(
+                        c in aligned.columns for c in ("ref_brake", "cmp_brake", "ref_speed", "cmp_speed", "lap_distance")
+                    ):
+                        markers = compare_brake_markers(aligned)
+                        flagged = [m for m in markers if m.get("flagged")]
+                        if flagged:
+                            st.subheader("Brake markers vs reference")
+                            for m in sorted(flagged, key=lambda x: abs(x["delta_m"]), reverse=True)[:5]:
+                                when = "later" if m["delta_m"] > 0 else "earlier"
+                                st.markdown(
+                                    f"- **{m['cmp_onset_m']:.0f} m**: {abs(m['delta_m']):.0f} m {when} than ref "
+                                    f"(ref {m['ref_onset_m']:.0f} m · approach ~{m['approach_speed']:.0f} km/h)"
+                                )
+                else:
+                    table = focus_corners.copy()
+                    for col in ("time_s", "vmin", "brake_point_m", "turn_in_speed", "exit_speed", "throttle_on_m", "trail_brake_s"):
+                        if col in table.columns:
+                            table[col] = table[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
+                    st.dataframe(table, use_container_width=True, hide_index=True)
+
+    with tab_compare:
+        if tab_compare.open:  # lazy tab: only the selected one runs
+            if focus_lap == ref_lap:
+                st.info("Pick a different reference lap to see deltas and overlays.")
+            else:
+                final_delta = float(aligned["delta_time"].iloc[-1]) if not aligned.empty else 0.0
+                st.markdown(
+                    f"**Lap {focus_lap}** vs **Lap {ref_lap}** → "
+                    f"{abs(final_delta):.3f}s {'slower' if final_delta > 0 else 'faster'}"
+                )
+                m1, m2 = st.columns(2)
+                with m1:
+                    pin_cursor(
+                        lap_map(
+                            focus_df,
+                            key=f"map_cmp_{sid}",
+                            ref_df=ref_df,
+                            color=map_color,
+                            outline=outline,
+                            corners=corners,
+                            pinned_d=cursor,
+                            title=f"Lap {focus_lap} vs lap {ref_lap} — colour: {map_color}",
+                            height=480,
+                            **lap_labels,
+                        )
+                    )
+                with m2:
+                    st.plotly_chart(plots.sector_bar(sectors), use_container_width=True, key="chart_compare_sectors")
+                    if not mini.empty:
+                        st.dataframe(
+                            mini.assign(
+                                delta_s=mini["delta_s"].map(lambda x: f"{x:+.3f}"),
+                                dist_start=mini["dist_start"].map(lambda x: f"{x:.0f}"),
+                                dist_end=mini["dist_end"].map(lambda x: f"{x:.0f}"),
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=280,
+                        )
+                pin_cursor(
+                    driver_trace(
+                        focus_df,
+                        key=f"trace_cmp_{sid}",
+                        ref_df=ref_df,
+                        corners=corners,
+                        cursor=cursor,
+                        **lap_labels,
+                    )
+                )
 
     with tab_xsess:
-        st.caption(
-            "Overlay this session’s best lap against another library session "
-            "(defaults to the personal-best session for this track)."
-        )
-        render_cross_session_compare(int(session["id"]), track=track, key_prefix=f"browse_xsess_{session['id']}")
+        if tab_xsess.open:  # lazy tab: only the selected one runs
+            st.caption(
+                "Overlay this session’s best lap against another library session "
+                "(defaults to the personal-best session for this track)."
+            )
+            render_cross_session_compare(int(session["id"]), track=track, key_prefix=f"browse_xsess_{session['id']}")
 
     with tab_single:
-        col_a, col_b = st.columns([1.1, 1.4])
-        with col_a:
-            pin_cursor(
-                lap_map(
-                    focus_df,
-                    key=f"map_single_{sid}",
-                    color=map_color,
-                    outline=outline,
-                    corners=corners,
-                    pinned_d=cursor,
-                    title=f"Lap {focus_lap}",
-                    height=460,
-                    cmp_label=f"L{focus_lap}",
+        if tab_single.open:  # lazy tab: only the selected one runs
+            col_a, col_b = st.columns([1.1, 1.4])
+            with col_a:
+                pin_cursor(
+                    lap_map(
+                        focus_df,
+                        key=f"map_single_{sid}",
+                        color=map_color,
+                        outline=outline,
+                        corners=corners,
+                        pinned_d=cursor,
+                        title=f"Lap {focus_lap}",
+                        height=460,
+                        cmp_label=f"L{focus_lap}",
+                    )
                 )
-            )
-            st.plotly_chart(plots.gg_diagram(focus_df), use_container_width=True, key="chart_single_gg")
-        with col_b:
-            pin_cursor(
-                driver_trace(focus_df, key=f"trace_single_{sid}", corners=corners, cursor=cursor, cmp_label=f"L{focus_lap}")
-            )
-            st.caption("Hover the map or a trace for live channels · click to pin · drag to zoom, double-click to reset.")
+                st.plotly_chart(plots.gg_diagram(focus_df), use_container_width=True, key="chart_single_gg")
+            with col_b:
+                pin_cursor(
+                    driver_trace(focus_df, key=f"trace_single_{sid}", corners=corners, cursor=cursor, cmp_label=f"L{focus_lap}")
+                )
+                st.caption("Hover the map or a trace for live channels · click to pin · drag to zoom, double-click to reset.")
 
     with tab_tyres:
-        pin_cursor(
-            render_tyres_tab(
-                session,
-                df,
-                summary,
-                focus_lap=focus_lap,
-                focus_df=focus_df,
-                corners=corners,
-                cursor=cursor,
-                app_root=APP_ROOT,
+        if tab_tyres.open:  # lazy tab: only the selected one runs
+            pin_cursor(
+                render_tyres_tab(
+                    session,
+                    df,
+                    summary,
+                    focus_lap=focus_lap,
+                    focus_df=focus_df,
+                    corners=corners,
+                    cursor=cursor,
+                    app_root=APP_ROOT,
+                )
             )
-        )
 
     with tab_strategy:
-        if track:
-            render_strategy(
-                track,
-                _as_state(session.get("conditions")),
-                APP_ROOT,
-                key=f"strat_{sid}",
-                session=session,
-                summary=summary,
-                df=df,
-            )
-        else:
-            st.info("Track unknown for this session — use the Strategy planner in the sidebar.")
+        if tab_strategy.open:  # lazy tab: only the selected one runs
+            if track:
+                render_strategy(
+                    track,
+                    _as_state(session.get("conditions")),
+                    APP_ROOT,
+                    key=f"strat_{sid}",
+                    session=session,
+                    summary=summary,
+                    df=df,
+                )
+            else:
+                st.info("Track unknown for this session — use the Strategy planner in the sidebar.")
 
     with tab_ers:
-        st.caption(
-            "2026-focused energy analysis from this session’s practice/race laps — "
-            "where you spend, where you harvest, and how SOC related to pace."
-        )
-        ers_table = session_ers_table(df)
-        focus_ers = lap_ers_summary(focus_df)
-        focus_profile = ers_by_distance(focus_df, n_bins=12)
-        corner_ers = ers_by_corner(focus_df, track, track_length)
-        advice = recommended_deploy_map(df, track, track_length)
-
-        k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("Start SOC", f"{focus_ers.get('start_mj', float('nan')):.2f} MJ" if focus_ers else "—")
-        k2.metric("End SOC", f"{focus_ers.get('end_mj', float('nan')):.2f} MJ" if focus_ers else "—")
-        k3.metric("Deployed", f"{focus_ers.get('deployed_mj', float('nan')):.2f} MJ" if focus_ers else "—")
-        k4.metric("Harvested", f"{focus_ers.get('harvested_mj', float('nan')):.2f} MJ" if focus_ers else "—")
-        k5.metric("Deploy mode", f"{focus_ers.get('deploy_mode_pct', float('nan')):.0f}%" if focus_ers else "—")
-
-        r1, r2 = st.columns(2)
-        with r1:
-            st.plotly_chart(plots.ers_plot(focus_df), use_container_width=True, key="chart_ers_trace")
-            st.plotly_chart(
-                plots.ers_profile_bars(focus_profile, title=f"Lap {focus_lap} — deploy vs harvest"),
-                use_container_width=True,
-                key="chart_ers_profile",
+        if tab_ers.open:  # lazy tab: only the selected one runs
+            st.caption(
+                "2026-focused energy analysis from this session’s practice/race laps — "
+                "where you spend, where you harvest, and how SOC related to pace."
             )
-        with r2:
-            st.plotly_chart(
-                plots.ers_session_scatter(ers_table),
-                use_container_width=True,
-                key="chart_ers_scatter",
-            )
-            st.plotly_chart(
-                plots.ers_advice_map(advice, outline_lap=focus_df),
-                use_container_width=True,
-                key="chart_ers_advice_map",
-            )
+            ers_table = session_ers_table(df)
+            focus_ers = lap_ers_summary(focus_df)
+            focus_profile = ers_by_distance(focus_df, n_bins=12)
+            corner_ers = ers_by_corner(focus_df, track, track_length)
+            advice = recommended_deploy_map(df, track, track_length)
 
-        if not corner_ers.empty:
-            st.plotly_chart(plots.ers_corner_bars(corner_ers), use_container_width=True, key="chart_ers_corners")
+            k1, k2, k3, k4, k5 = st.columns(5)
+            k1.metric("Start SOC", f"{focus_ers.get('start_mj', float('nan')):.2f} MJ" if focus_ers else "—")
+            k2.metric("End SOC", f"{focus_ers.get('end_mj', float('nan')):.2f} MJ" if focus_ers else "—")
+            k3.metric("Deployed", f"{focus_ers.get('deployed_mj', float('nan')):.2f} MJ" if focus_ers else "—")
+            k4.metric("Harvested", f"{focus_ers.get('harvested_mj', float('nan')):.2f} MJ" if focus_ers else "—")
+            k5.metric("Deploy mode", f"{focus_ers.get('deploy_mode_pct', float('nan')):.0f}%" if focus_ers else "—")
 
-        st.subheader("Practice lap ERS table")
-        if not ers_table.empty:
-            show = ers_table.copy()
-            for col in ("lap_time", "start_mj", "end_mj", "deployed_mj", "harvested_mj", "delta_best"):
-                if col in show.columns:
-                    show[col] = show[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
-            cols = [
-                c
-                for c in [
-                    "lap",
-                    "lap_time",
-                    "delta_best",
-                    "start_mj",
-                    "end_mj",
-                    "deployed_mj",
-                    "harvested_mj",
-                    "deploy_mode_pct",
-                    "partial_throttle_deploy_pct",
-                    "empty_pct",
-                    "ers_discipline",
-                ]
-                if c in show.columns
-            ]
-            st.dataframe(show[cols], use_container_width=True, hide_index=True)
+            r1, r2 = st.columns(2)
+            with r1:
+                st.plotly_chart(plots.ers_plot(focus_df), use_container_width=True, key="chart_ers_trace")
+                st.plotly_chart(
+                    plots.ers_profile_bars(focus_profile, title=f"Lap {focus_lap} — deploy vs harvest"),
+                    use_container_width=True,
+                    key="chart_ers_profile",
+                )
+            with r2:
+                st.plotly_chart(
+                    plots.ers_session_scatter(ers_table),
+                    use_container_width=True,
+                    key="chart_ers_scatter",
+                )
+                st.plotly_chart(
+                    plots.ers_advice_map(advice, outline_lap=focus_df),
+                    use_container_width=True,
+                    key="chart_ers_advice_map",
+                )
 
-        st.subheader("ERS coach (from this session)")
-        ers_tips = practice_ers_insights(
-            df,
-            focus_lap,
-            reference_lap=ref_lap,
-            track=track,
-            track_length=track_length,
-        )
-        for tip in ers_tips:
-            css = {"tip": "insight-tip", "warning": "insight-warning", "info": "insight-info"}.get(
-                tip.severity, "insight-info"
-            )
-            st.markdown(
-                f'<div class="{css}"><strong>{tip.title}</strong><br/>{tip.detail}</div>',
-                unsafe_allow_html=True,
-            )
+            if not corner_ers.empty:
+                st.plotly_chart(plots.ers_corner_bars(corner_ers), use_container_width=True, key="chart_ers_corners")
 
-        if "fuel" in focus_df.columns or "drs" in focus_df.columns:
-            st.markdown("---")
-            f1, f2, f3 = st.columns(3)
-            if "fuel" in focus_df.columns:
-                f1.metric("Fuel used", f"{focus_df['fuel'].iloc[0] - focus_df['fuel'].iloc[-1]:.2f}")
-            if "drs" in focus_df.columns:
-                f2.metric("DRS open", f"{(focus_df['drs'] > 0).mean() * 100:.1f}%")
-            if focus_ers:
-                f3.metric("SOC empty time", f"{focus_ers.get('empty_pct', 0):.0f}% of lap")
-
-        st.markdown("---")
-        render_2026_channels_panel(df, focus_lap, reference_lap=ref_lap, chart_prefix=f"ers_{session['id']}")
-
-    with tab_setup:
-        st.caption(
-            "Engineer mode: build from this practice starts from the garage you ran, diagnoses entry / mid / exit, "
-            "then applies a small coordinated tweak. "
-            "Browse any track without a session via sidebar **Garage**."
-        )
-        render_followup_cards(session, APP_ROOT)
-        with st.expander("Runs in this session", expanded=False):
-            render_runs_panel(session, APP_ROOT)
-        with st.expander("Compare with an earlier session (A/B)", expanded=False):
-            if not track:
-                st.caption("Track unknown for this session.")
-            elif st.toggle("Load comparison", key=f"cmp_load_{sid}"):
-                render_compare_panel(session, track, APP_ROOT, key=f"cmp_{sid}")
-        if track:
-            with st.expander("Setup evolution on this track", expanded=False):
-                tl = setup_timeline(track, APP_ROOT)
-                if tl.empty:
-                    st.caption("No setup history yet.")
-                else:
-                    show_tl = tl.sort_values("created_at", ascending=False).head(12)
-                    disp = show_tl[
-                        [
-                            c
-                            for c in [
-                                "session_id",
-                                "created_at",
-                                "best_lap_time",
-                                "pace_delta_s",
-                                "setup_delta_summary",
-                                "setup_fingerprint",
-                            ]
-                            if c in show_tl.columns
-                        ]
-                    ].copy()
-                    if "best_lap_time" in disp.columns:
-                        disp["best_lap_time"] = disp["best_lap_time"].map(format_lap_time)
-                    if "pace_delta_s" in disp.columns:
-                        disp["pace_delta_s"] = disp["pace_delta_s"].map(
-                            lambda x: f"{x:+.3f}s" if pd.notna(x) else "—"
-                        )
-                    st.dataframe(disp, use_container_width=True, hide_index=True)
-                    st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
-                    exp_df = experiments_frame(track, APP_ROOT)
-                    if not exp_df.empty:
-                        st.markdown("**Measured experiments** (fuel-corrected, same track state)")
-                        st.dataframe(exp_df, use_container_width=True, hide_index=True)
-
-        ui_id = f"sess_{sid}"
-        state_key = f"setup_proposed_{sid}_{focus_lap}"
-
-        st.subheader("Setup builder")
-        st.caption("Garage suggestions use the **session read** (all probable laps vs PB); focus lap selects which garage snapshot to start from.")
-        sess_wx = parse_track_state(session.get("conditions"))
-        b1, b2, b3, b4 = st.columns([1.2, 0.9, 1, 1])
-        with b1:
-            track_options = list_tracks_with_setups()
-            default_track = track if track in track_options else (track_options[0] if track_options else "Bahrain")
-            setup_track = st.selectbox(
-                "Track baseline",
-                track_options,
-                index=track_options.index(default_track) if default_track in track_options else 0,
-                key=f"setup_track_{sid}",
-            )
-        with b2:
-            setup_variant = st.radio("Variant", ["Quali", "Race"], horizontal=True, key=f"setup_var_{sid}")
-        with b3:
-            setup_wx = st.selectbox(
-                "Track state",
-                STATE_OPTIONS,
-                index=STATE_OPTIONS.index(STATE_LABELS[sess_wx]),
-                key=f"setup_wx_{sid}",
-            )
-            setup_conditions = compose_conditions(label_to_state(setup_wx))
-        with b4:
-            st.write("")
-            st.write("")
-            build_clicked = st.button("Build from this practice", type="primary", key=f"setup_build_{sid}")
-
-        setup_base = st.radio(
-            "Start from",
-            ["Session garage", "Best verified", "Track typical"],
-            horizontal=True,
-            key=f"setup_base_{sid}",
-            help="Best verified = the fastest run on this track (enough laps, same track state, fuel-corrected). "
-            "Builder also learns from earlier experiments: it backs out moves that cost time and skips levers that hurt.",
-        )
-
-        typical_pack = get_typical_setup(setup_track, setup_variant.lower(), conditions=setup_conditions)
-
-        stored_setup = {}
-        if session.get("setup_json"):
-            try:
-                stored_setup = json.loads(session["setup_json"])
-            except json.JSONDecodeError:
-                stored_setup = {}
-
-        setup, setup_source = resolve_session_setup(
-            stored_setup,
-            df,
-            focus_lap,
-            typical_setup=(typical_pack or {}).get("setup"),
-        )
-        baseline = setup if setup else {}
-        if state_key not in st.session_state:
-            st.session_state[state_key] = dict(baseline) if baseline else {}
-        c_load1, c_load2, c_load3 = st.columns(3)
-        if typical_pack and c_load1.button(
-            f"Load typical {setup_track} {setup_variant}",
-            key=f"load_typical_{sid}",
-        ):
-            apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
-            st.session_state[f"setup_build_notes_{sid}"] = [
-                typical_pack["notes"],
-                f"Loaded typical {setup_track} {typical_pack['variant']} ({typical_pack['character']}).",
-            ]
-            st.rerun()
-        if baseline and c_load2.button("Load session setup", key=f"load_session_{sid}"):
-            apply_setup_to_state(state_key, ui_id, baseline)
-            st.session_state.pop(f"setup_build_notes_{sid}", None)
-            st.rerun()
-        if c_load3.button("Reset tweaker", key=f"setup_reset_{sid}"):
-            if baseline:
-                apply_setup_to_state(state_key, ui_id, baseline)
-            elif typical_pack:
-                apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
-            st.session_state.pop(f"setup_build_notes_{sid}", None)
-            st.rerun()
-
-        if typical_pack:
-            st.caption(f"**{setup_track}** · {typical_pack['character']} — {typical_pack['notes']}")
-        if setup_source.startswith("telemetry"):
-            fw = baseline.get("wing_setup_0")
-            rw = baseline.get("wing_setup_1")
-            wing_txt = f"FW/RW {fw:.0f}/{rw:.0f}" if fw is not None and rw is not None else "garage channels"
-            st.caption(f"Session garage base: **{setup_source}** ({wing_txt}). Builder tweaks from this.")
-        elif baseline:
-            st.caption("Session garage base: imported setup snapshot (re-import CSV to refresh from telemetry).")
-
-        if build_clicked:
-            session_diag = build_session_diagnosis(
-                df,
-                best_lap=best_lap,
-                conditions=setup_conditions,
-                track=setup_track or track,
-                track_length=track_length,
-            )
-            mode_key = setup_variant.lower()
-            cur_run = best_run(load_session_runs(sid, APP_ROOT), mode_key)
-            history = load_history(
-                setup_track or track,
-                mode_key,
-                label_to_state(setup_wx),
-                issue=session_diag.primary_issue,
-                phase=session_diag.phase,
-                compound=cur_run.compound if cur_run else None,
-                app_root=APP_ROOT,
-                before_session_id=sid,
-            )
-            base_mode = {"Session garage": "session", "Best verified": "best_verified", "Track typical": "typical"}[
-                setup_base
-            ]
-            built = build_setup_from_practice(
-                df,
-                baseline,
-                setup_track or track,
-                variant=mode_key,
-                lap=focus_lap,
-                conditions=setup_conditions,
-                diagnosis=session_diag,
-                corner_cmp=corner_cmp,
-                history=history,
-                base=base_mode,
-            )
-            history_notes: list[str] = []
-            if base_mode == "best_verified" and not history.best_verified:
-                history_notes.append("No verified run on this track yet — started from the session garage instead.")
-            bv = history.best_verified
-            if bv and cur_run and bv["session_id"] != sid and base_mode != "best_verified":
-                cur_pace = cur_run.best_corrected if mode_key == "quali" else cur_run.median_corrected
-                if bv["pace"] < cur_pace - NOISE_FLOOR[mode_key]:
-                    history_notes.append(
-                        f"Session #{bv['session_id']} ran {cur_pace - bv['pace']:.3f}s faster (fuel-corrected) — "
-                        "pick **Best verified** to start from that garage."
-                    )
-            save_recommendation(
-                session_id=sid,
-                track=setup_track or track,
-                variant=mode_key,
-                conditions=setup_conditions,
-                base_setup=baseline,
-                proposed_setup=built.setup,
-                changes=built.changes,
-                diagnosis={
-                    "issue": session_diag.primary_issue,
-                    "phase": session_diag.phase,
-                    "strength": session_diag.strength,
-                    "headline": session_diag.headline,
-                    "balance": session_diag.symptoms,
-                },
-                app_root=APP_ROOT,
-            )
-            st.session_state[f"setup_coach_item_{sid}"] = setup_summary_item(
-                session_diag, built.changes, built.findings
-            )
-            apply_setup_to_state(state_key, ui_id, built.setup)
-            notes = list(built.findings)
-            if built.diagnosis:
-                notes.insert(0, f"Diagnosis: {built.diagnosis}.")
-            if built.est_dt_vs_session is not None:
-                notes.append(f"Est. vs your session setup: {built.est_dt_vs_session:+.3f}s")
-            if built.est_dt_vs_typical is not None:
-                notes.append(f"Est. vs track typical: {built.est_dt_vs_typical:+.3f}s")
-            notes.extend(history_notes)
-            notes.append(
-                "Saved to the setup journal — import your next session on this track and it will be scored against this advice."
-            )
-            st.session_state[f"setup_build_notes_{sid}"] = notes
-            st.session_state[f"setup_build_changes_{sid}"] = changes_frame(built).to_dict("records")
-            st.rerun()
-
-        if st.session_state.get(f"setup_build_notes_{sid}"):
-            with st.expander("Builder findings", expanded=True):
-                for note in st.session_state[f"setup_build_notes_{sid}"]:
-                    st.markdown(f"- {note}")
-                ch = st.session_state.get(f"setup_build_changes_{sid}") or []
-                if ch:
-                    st.dataframe(pd.DataFrame(ch), use_container_width=True, hide_index=True)
-
-        if not st.session_state.get(state_key) and typical_pack:
-            apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
-
-        compare_base = baseline if baseline else normalize_setup(
-            (typical_pack or {}).get("setup") or st.session_state.get(state_key) or {}
-        )
-        render_garage_tweaker(
-            ui_id=ui_id,
-            state_key=state_key,
-            compare_base=compare_base,
-            track=setup_track or track,
-            reference_lap_time=float(focus_row["lap_time"]),
-            base_label="session setup" if baseline else "baseline",
-            chart_prefix=f"sess_{sid}",
-            conditions=setup_conditions,
-        )
-
-        st.markdown("---")
-        st.subheader("Tyre & fuel saving")
-        stint_table = session_stint_table(df)
-        s1, s2 = st.columns([1.2, 1])
-        with s1:
-            st.plotly_chart(
-                plots.stint_efficiency_chart(stint_table),
-                use_container_width=True,
-                key="chart_stint_eff",
-            )
-            if not stint_table.empty:
-                show = stint_table.copy()
-                for col in ("lap_time", "fuel_used", "wear_delta_pct", "coast_pct", "tyre_temp_avg", "stint_score"):
+            st.subheader("Practice lap ERS table")
+            if not ers_table.empty:
+                show = ers_table.copy()
+                for col in ("lap_time", "start_mj", "end_mj", "deployed_mj", "harvested_mj", "delta_best"):
                     if col in show.columns:
-                        show[col] = show[col].map(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+                        show[col] = show[col].map(lambda x: f"{x:.3f}" if pd.notna(x) else "—")
                 cols = [
                     c
                     for c in [
                         "lap",
                         "lap_time",
-                        "fuel_used",
-                        "wear_delta_pct",
-                        "coast_pct",
-                        "tyre_temp_avg",
-                        "tyre_temp_spread",
-                        "lockup_samples",
-                        "stint_score",
+                        "delta_best",
+                        "start_mj",
+                        "end_mj",
+                        "deployed_mj",
+                        "harvested_mj",
+                        "deploy_mode_pct",
+                        "partial_throttle_deploy_pct",
+                        "empty_pct",
+                        "ers_discipline",
                     ]
                     if c in show.columns
                 ]
                 st.dataframe(show[cols], use_container_width=True, hide_index=True)
-        with s2:
-            for tip in stint_saving_insights(
-                df, focus_lap, reference_lap=ref_lap, conditions=session.get("conditions")
-            ):
+
+            st.subheader("ERS coach (from this session)")
+            ers_tips = practice_ers_insights(
+                df,
+                focus_lap,
+                reference_lap=ref_lap,
+                track=track,
+                track_length=track_length,
+            )
+            for tip in ers_tips:
                 css = {"tip": "insight-tip", "warning": "insight-warning", "info": "insight-info"}.get(
                     tip.severity, "insight-info"
                 )
                 st.markdown(
-                    f'<div class="{css}"><strong>[{tip.category}] {tip.title}</strong><br/>{tip.detail}</div>',
+                    f'<div class="{css}"><strong>{tip.title}</strong><br/>{tip.detail}</div>',
                     unsafe_allow_html=True,
                 )
 
-        st.markdown("---")
-        render_stint_windows_panel(
-            df,
-            track_length_m=float(track_length) if track_length else None,
-            default_target_laps=None,
-            chart_prefix=f"stint_{session['id']}",
-        )
+            if "fuel" in focus_df.columns or "drs" in focus_df.columns:
+                st.markdown("---")
+                f1, f2, f3 = st.columns(3)
+                if "fuel" in focus_df.columns:
+                    f1.metric("Fuel used", f"{focus_df['fuel'].iloc[0] - focus_df['fuel'].iloc[-1]:.2f}")
+                if "drs" in focus_df.columns:
+                    f2.metric("DRS open", f"{(focus_df['drs'] > 0).mean() * 100:.1f}%")
+                if focus_ers:
+                    f3.metric("SOC empty time", f"{focus_ers.get('empty_pct', 0):.0f}% of lap")
+
+            st.markdown("---")
+            render_2026_channels_panel(df, focus_lap, reference_lap=ref_lap, chart_prefix=f"ers_{session['id']}")
+
+    with tab_setup:
+        if tab_setup.open:  # lazy tab: only the selected one runs
+            st.caption(
+                "Engineer mode: build from this practice starts from the garage you ran, diagnoses entry / mid / exit, "
+                "then applies a small coordinated tweak. "
+                "Browse any track without a session via sidebar **Garage**."
+            )
+            render_followup_cards(session, APP_ROOT)
+            with st.expander("Runs in this session", expanded=False):
+                render_runs_panel(session, APP_ROOT)
+            with st.expander("Compare with an earlier session (A/B)", expanded=False):
+                if not track:
+                    st.caption("Track unknown for this session.")
+                elif st.toggle("Load comparison", key=f"cmp_load_{sid}"):
+                    render_compare_panel(session, track, APP_ROOT, key=f"cmp_{sid}")
+            if track:
+                with st.expander("Setup evolution on this track", expanded=False):
+                    tl = setup_timeline(track, APP_ROOT)
+                    if tl.empty:
+                        st.caption("No setup history yet.")
+                    else:
+                        show_tl = tl.sort_values("created_at", ascending=False).head(12)
+                        disp = show_tl[
+                            [
+                                c
+                                for c in [
+                                    "session_id",
+                                    "created_at",
+                                    "best_lap_time",
+                                    "pace_delta_s",
+                                    "setup_delta_summary",
+                                    "setup_fingerprint",
+                                ]
+                                if c in show_tl.columns
+                            ]
+                        ].copy()
+                        if "best_lap_time" in disp.columns:
+                            disp["best_lap_time"] = disp["best_lap_time"].map(format_lap_time)
+                        if "pace_delta_s" in disp.columns:
+                            disp["pace_delta_s"] = disp["pace_delta_s"].map(
+                                lambda x: f"{x:+.3f}s" if pd.notna(x) else "—"
+                            )
+                        st.dataframe(disp, use_container_width=True, hide_index=True)
+                        st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
+                        exp_df = experiments_frame(track, APP_ROOT)
+                        if not exp_df.empty:
+                            st.markdown("**Measured experiments** (fuel-corrected, same track state)")
+                            st.dataframe(exp_df, use_container_width=True, hide_index=True)
+
+            ui_id = f"sess_{sid}"
+            state_key = f"setup_proposed_{sid}_{focus_lap}"
+
+            st.subheader("Setup builder")
+            st.caption("Garage suggestions use the **session read** (all probable laps vs PB); focus lap selects which garage snapshot to start from.")
+            sess_wx = parse_track_state(session.get("conditions"))
+            b1, b2, b3, b4 = st.columns([1.2, 0.9, 1, 1])
+            with b1:
+                track_options = list_tracks_with_setups()
+                default_track = track if track in track_options else (track_options[0] if track_options else "Bahrain")
+                setup_track = st.selectbox(
+                    "Track baseline",
+                    track_options,
+                    index=track_options.index(default_track) if default_track in track_options else 0,
+                    key=f"setup_track_{sid}",
+                )
+            with b2:
+                setup_variant = st.radio("Variant", ["Quali", "Race"], horizontal=True, key=f"setup_var_{sid}")
+            with b3:
+                setup_wx = st.selectbox(
+                    "Track state",
+                    STATE_OPTIONS,
+                    index=STATE_OPTIONS.index(STATE_LABELS[sess_wx]),
+                    key=f"setup_wx_{sid}",
+                )
+                setup_conditions = compose_conditions(label_to_state(setup_wx))
+            with b4:
+                st.write("")
+                st.write("")
+                build_clicked = st.button("Build from this practice", type="primary", key=f"setup_build_{sid}")
+
+            setup_base = st.radio(
+                "Start from",
+                ["Session garage", "Best verified", "Track typical"],
+                horizontal=True,
+                key=f"setup_base_{sid}",
+                help="Best verified = the fastest run on this track (enough laps, same track state, fuel-corrected). "
+                "Builder also learns from earlier experiments: it backs out moves that cost time and skips levers that hurt.",
+            )
+
+            typical_pack = get_typical_setup(setup_track, setup_variant.lower(), conditions=setup_conditions)
+
+            stored_setup = {}
+            if session.get("setup_json"):
+                try:
+                    stored_setup = json.loads(session["setup_json"])
+                except json.JSONDecodeError:
+                    stored_setup = {}
+
+            setup, setup_source = resolve_session_setup(
+                stored_setup,
+                df,
+                focus_lap,
+                typical_setup=(typical_pack or {}).get("setup"),
+            )
+            baseline = setup if setup else {}
+            if state_key not in st.session_state:
+                st.session_state[state_key] = dict(baseline) if baseline else {}
+            c_load1, c_load2, c_load3 = st.columns(3)
+            if typical_pack and c_load1.button(
+                f"Load typical {setup_track} {setup_variant}",
+                key=f"load_typical_{sid}",
+            ):
+                apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
+                st.session_state[f"setup_build_notes_{sid}"] = [
+                    typical_pack["notes"],
+                    f"Loaded typical {setup_track} {typical_pack['variant']} ({typical_pack['character']}).",
+                ]
+                st.rerun()
+            if baseline and c_load2.button("Load session setup", key=f"load_session_{sid}"):
+                apply_setup_to_state(state_key, ui_id, baseline)
+                st.session_state.pop(f"setup_build_notes_{sid}", None)
+                st.rerun()
+            if c_load3.button("Reset tweaker", key=f"setup_reset_{sid}"):
+                if baseline:
+                    apply_setup_to_state(state_key, ui_id, baseline)
+                elif typical_pack:
+                    apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
+                st.session_state.pop(f"setup_build_notes_{sid}", None)
+                st.rerun()
+
+            if typical_pack:
+                st.caption(f"**{setup_track}** · {typical_pack['character']} — {typical_pack['notes']}")
+            if setup_source.startswith("telemetry"):
+                fw = baseline.get("wing_setup_0")
+                rw = baseline.get("wing_setup_1")
+                wing_txt = f"FW/RW {fw:.0f}/{rw:.0f}" if fw is not None and rw is not None else "garage channels"
+                st.caption(f"Session garage base: **{setup_source}** ({wing_txt}). Builder tweaks from this.")
+            elif baseline:
+                st.caption("Session garage base: imported setup snapshot (re-import CSV to refresh from telemetry).")
+
+            if build_clicked:
+                session_diag = build_session_diagnosis(
+                    df,
+                    best_lap=best_lap,
+                    conditions=setup_conditions,
+                    track=setup_track or track,
+                    track_length=track_length,
+                )
+                mode_key = setup_variant.lower()
+                cur_run = best_run(load_session_runs(sid, APP_ROOT), mode_key)
+                history = load_history(
+                    setup_track or track,
+                    mode_key,
+                    label_to_state(setup_wx),
+                    issue=session_diag.primary_issue,
+                    phase=session_diag.phase,
+                    compound=cur_run.compound if cur_run else None,
+                    app_root=APP_ROOT,
+                    before_session_id=sid,
+                )
+                base_mode = {"Session garage": "session", "Best verified": "best_verified", "Track typical": "typical"}[
+                    setup_base
+                ]
+                built = build_setup_from_practice(
+                    df,
+                    baseline,
+                    setup_track or track,
+                    variant=mode_key,
+                    lap=focus_lap,
+                    conditions=setup_conditions,
+                    diagnosis=session_diag,
+                    corner_cmp=corner_cmp,
+                    history=history,
+                    base=base_mode,
+                )
+                history_notes: list[str] = []
+                if base_mode == "best_verified" and not history.best_verified:
+                    history_notes.append("No verified run on this track yet — started from the session garage instead.")
+                bv = history.best_verified
+                if bv and cur_run and bv["session_id"] != sid and base_mode != "best_verified":
+                    cur_pace = cur_run.best_corrected if mode_key == "quali" else cur_run.median_corrected
+                    if bv["pace"] < cur_pace - NOISE_FLOOR[mode_key]:
+                        history_notes.append(
+                            f"Session #{bv['session_id']} ran {cur_pace - bv['pace']:.3f}s faster (fuel-corrected) — "
+                            "pick **Best verified** to start from that garage."
+                        )
+                save_recommendation(
+                    session_id=sid,
+                    track=setup_track or track,
+                    variant=mode_key,
+                    conditions=setup_conditions,
+                    base_setup=baseline,
+                    proposed_setup=built.setup,
+                    changes=built.changes,
+                    diagnosis={
+                        "issue": session_diag.primary_issue,
+                        "phase": session_diag.phase,
+                        "strength": session_diag.strength,
+                        "headline": session_diag.headline,
+                        "balance": session_diag.symptoms,
+                    },
+                    app_root=APP_ROOT,
+                )
+                st.session_state[f"setup_coach_item_{sid}"] = setup_summary_item(
+                    session_diag, built.changes, built.findings
+                )
+                apply_setup_to_state(state_key, ui_id, built.setup)
+                notes = list(built.findings)
+                if built.diagnosis:
+                    notes.insert(0, f"Diagnosis: {built.diagnosis}.")
+                if built.est_dt_vs_session is not None:
+                    notes.append(f"Est. vs your session setup: {built.est_dt_vs_session:+.3f}s")
+                if built.est_dt_vs_typical is not None:
+                    notes.append(f"Est. vs track typical: {built.est_dt_vs_typical:+.3f}s")
+                notes.extend(history_notes)
+                notes.append(
+                    "Saved to the setup journal — import your next session on this track and it will be scored against this advice."
+                )
+                st.session_state[f"setup_build_notes_{sid}"] = notes
+                st.session_state[f"setup_build_changes_{sid}"] = changes_frame(built).to_dict("records")
+                st.rerun()
+
+            if st.session_state.get(f"setup_build_notes_{sid}"):
+                with st.expander("Builder findings", expanded=True):
+                    for note in st.session_state[f"setup_build_notes_{sid}"]:
+                        st.markdown(f"- {note}")
+                    ch = st.session_state.get(f"setup_build_changes_{sid}") or []
+                    if ch:
+                        st.dataframe(pd.DataFrame(ch), use_container_width=True, hide_index=True)
+
+            if not st.session_state.get(state_key) and typical_pack:
+                apply_setup_to_state(state_key, ui_id, typical_pack["setup"])
+
+            compare_base = baseline if baseline else normalize_setup(
+                (typical_pack or {}).get("setup") or st.session_state.get(state_key) or {}
+            )
+            render_garage_tweaker(
+                ui_id=ui_id,
+                state_key=state_key,
+                compare_base=compare_base,
+                track=setup_track or track,
+                reference_lap_time=float(focus_row["lap_time"]),
+                base_label="session setup" if baseline else "baseline",
+                chart_prefix=f"sess_{sid}",
+                conditions=setup_conditions,
+            )
+
+            st.markdown("---")
+            st.subheader("Tyre & fuel saving")
+            stint_table = session_stint_table(df)
+            s1, s2 = st.columns([1.2, 1])
+            with s1:
+                st.plotly_chart(
+                    plots.stint_efficiency_chart(stint_table),
+                    use_container_width=True,
+                    key="chart_stint_eff",
+                )
+                if not stint_table.empty:
+                    show = stint_table.copy()
+                    for col in ("lap_time", "fuel_used", "wear_delta_pct", "coast_pct", "tyre_temp_avg", "stint_score"):
+                        if col in show.columns:
+                            show[col] = show[col].map(lambda x: f"{x:.2f}" if pd.notna(x) else "—")
+                    cols = [
+                        c
+                        for c in [
+                            "lap",
+                            "lap_time",
+                            "fuel_used",
+                            "wear_delta_pct",
+                            "coast_pct",
+                            "tyre_temp_avg",
+                            "tyre_temp_spread",
+                            "lockup_samples",
+                            "stint_score",
+                        ]
+                        if c in show.columns
+                    ]
+                    st.dataframe(show[cols], use_container_width=True, hide_index=True)
+            with s2:
+                for tip in stint_saving_insights(
+                    df, focus_lap, reference_lap=ref_lap, conditions=session.get("conditions")
+                ):
+                    css = {"tip": "insight-tip", "warning": "insight-warning", "info": "insight-info"}.get(
+                        tip.severity, "insight-info"
+                    )
+                    st.markdown(
+                        f'<div class="{css}"><strong>[{tip.category}] {tip.title}</strong><br/>{tip.detail}</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("---")
+            render_stint_windows_panel(
+                df,
+                track_length_m=float(track_length) if track_length else None,
+                default_target_laps=None,
+                chart_prefix=f"stint_{session['id']}",
+            )
 
     with tab_coach:
-        extra_setup: list[CoachItem] = []
-        setup_item = st.session_state.get(f"setup_coach_item_{sid}")
-        if setup_item is not None:
-            extra_setup = [setup_item]
+        if tab_coach.open:  # lazy tab: only the selected one runs
+            extra_setup: list[CoachItem] = []
+            setup_item = st.session_state.get(f"setup_coach_item_{sid}")
+            if setup_item is not None:
+                extra_setup = [setup_item]
 
-        extra_setup = extra_setup + setup_followup_items(followup_entries(sid, APP_ROOT))
+            extra_setup = extra_setup + setup_followup_items(followup_entries(sid, APP_ROOT))
 
-        diag, top_items, rest_items = coach_feed_for_session(
-            df,
-            track=track,
-            track_length=track_length,
-            conditions=session.get("conditions"),
-            extra_items=extra_setup or None,
-            best_lap=best_lap,
-        )
-        render_coach_feed(diag.headline, top_items, rest_items)
+            diag, top_items, rest_items = coach_feed_for_session(
+                df,
+                track=track,
+                track_length=track_length,
+                conditions=session.get("conditions"),
+                extra_items=extra_setup or None,
+                best_lap=best_lap,
+            )
+            render_coach_feed(diag.headline, top_items, rest_items)
 
-        st.caption(
-            "Session-level engineer feed from all probable laps (PB as reference). "
-            "Lap selector still drives Corners, Compare, and Setup tabs."
-        )
+            st.caption(
+                "Session-level engineer feed from all probable laps (PB as reference). "
+                "Lap selector still drives Corners, Compare, and Setup tabs."
+            )
 
 
 def render_garage() -> None:
@@ -1691,6 +1705,23 @@ def render_strategy_planner() -> None:
     render_strategy(track, state, APP_ROOT, key=f"planner_{track}_{state}")
 
 
+@st.cache_resource(show_spinner="Indexing the library…", max_entries=1)
+def library_maintenance(session_ids: tuple[int, ...]) -> dict:
+    """
+    Idempotent library upkeep, once per app process and set of sessions (an import or a delete
+    changes the key) instead of once per browser tab.
+    """
+    out = {"scrubbed": scrub_improbable_lap_records(APP_ROOT)}
+    out["progress"] = backfill_progress_from_library(APP_ROOT)  # PBs from probable laps only
+    out["fingerprints"] = backfill_setup_fingerprints(APP_ROOT)
+    out["tags"] = backfill_session_tags(APP_ROOT)  # blank type / track state only, never your tags
+    if out["tags"]:
+        st.cache_data.clear()
+        clear_tyre_cache()
+    out["journal"] = evaluate_all(APP_ROOT)
+    return out
+
+
 def main() -> None:
     init_db(APP_ROOT)
     ensure_progress_schema(APP_ROOT)
@@ -1701,28 +1732,9 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    if "improbable_laps_scrubbed" not in st.session_state:
-        scrubbed = scrub_improbable_lap_records(APP_ROOT)
-        st.session_state["improbable_laps_scrubbed"] = scrubbed
-        # Force progress re-index so PBs rebuild from probable laps only
-        if scrubbed.get("pb_removed") or scrubbed.get("sessions_fixed"):
-            st.session_state.pop("progress_backfilled", None)
-
-    if "progress_backfilled" not in st.session_state:
-        with st.spinner("Indexing progress from existing sessions…"):
-            n = backfill_progress_from_library(APP_ROOT)
-            st.session_state["progress_backfilled"] = n
-    if "setup_fp_backfilled" not in st.session_state:
-        st.session_state["setup_fp_backfilled"] = backfill_setup_fingerprints(APP_ROOT)
-    if "session_tags_backfilled" not in st.session_state:
-        # Blank type / track state only — tags you set are never touched.
-        st.session_state["session_tags_backfilled"] = backfill_session_tags(APP_ROOT)
-        if st.session_state["session_tags_backfilled"]:
-            st.cache_data.clear()
-            clear_tyre_cache()
-    if "setup_journal_evaluated" not in st.session_state:
-        with st.spinner("Scoring setup experiments…"):
-            st.session_state["setup_journal_evaluated"] = evaluate_all(APP_ROOT)
+    sessions_now = list_sessions(APP_ROOT)
+    maintenance = library_maintenance(tuple(int(i) for i in sessions_now["id"]) if not sessions_now.empty else ())
+    st.session_state["session_tags_backfilled"] = maintenance["tags"]
 
     stats = library_stats(APP_ROOT)
     s1, s2, s3, s4 = st.columns(4)
@@ -1761,8 +1773,7 @@ def main() -> None:
             if st.button("Delete session from library", type="secondary"):
                 delete_session(int(session["id"]), APP_ROOT)
                 st.session_state.pop("selected_session_id", None)
-                st.session_state.pop("setup_journal_evaluated", None)
-                st.cache_data.clear()
+                st.cache_data.clear()  # the library upkeep reruns by itself: its key is the session list
                 clear_tyre_cache()
                 clear_run_cache()
                 st.rerun()
