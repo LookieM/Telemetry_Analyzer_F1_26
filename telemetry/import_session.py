@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
+
 from .db import (
     compact_dataframe,
     default_data_dir,
@@ -60,20 +62,45 @@ def import_csv(
 
     existing = find_by_hash(digest, root)
     if existing:
-        return ImportResult(
-            session_id=int(existing["id"]),
-            already_existed=True,
-            source_name=existing["source_name"],
-            track=existing.get("track"),
-            car=existing.get("car"),
-            lap_count=int(existing.get("lap_count") or 0),
-            original_bytes=int(existing.get("original_size_bytes") or original_size),
-            stored_bytes=int(existing.get("stored_size_bytes") or 0),
-            source_deleted=False,
-            message=f"Already in library as session #{existing['id']}.",
-        )
+        return _existing_result(existing, original_size)
 
     df = load_telemetry(path)
+    return ingest_dataframe(
+        df,
+        source_name=source_name or path.name,
+        source_hash=digest,
+        original_size=original_size,
+        app_root=root,
+        session_type=session_type,
+        conditions=conditions,
+        notes=notes,
+        delete_source_path=path if delete_source else None,
+    )
+
+
+def ingest_dataframe(
+    df: pd.DataFrame,
+    *,
+    source_name: str,
+    source_hash: str,
+    original_size: int,
+    app_root: Path | None = None,
+    session_type: str = "",
+    conditions: str = "",
+    notes: str = "",
+    delete_source_path: Path | None = None,
+) -> ImportResult:
+    """
+    Store an already loaded telemetry frame: meta, lap summary, setup, tags, compact Parquet,
+    DB rows, track outline, progress and the setup journal. Shared by CSV import and live recording.
+    An existing `source_hash` is not stored twice; the existing session is returned.
+    """
+    root = app_root or Path(__file__).resolve().parent.parent
+    digest = source_hash
+    existing = find_by_hash(digest, root)
+    if existing:
+        return _existing_result(existing, original_size)
+
     if df.empty or "lap" not in df.columns:
         raise ValueError("Could not parse lap telemetry from this file.")
 
@@ -91,7 +118,7 @@ def import_csv(
     from .setup_history import compute_setup_fingerprint
 
     setup_fp = compute_setup_fingerprint(setup)
-    name = source_name or path.name
+    name = source_name
     if not session_type or not conditions:
         from .session_tags import infer_tags
 
@@ -180,8 +207,8 @@ def import_csv(
             pass  # the journal is a bonus; never fail an import because of it
 
     source_deleted = False
-    if delete_source:
-        path.unlink()
+    if delete_source_path is not None:
+        delete_source_path.unlink()
         source_deleted = True
         from .db import connect
 
@@ -212,6 +239,21 @@ def import_csv(
             + pb_note
             + tag_note
         ),
+    )
+
+
+def _existing_result(existing: dict, original_size: int) -> ImportResult:
+    return ImportResult(
+        session_id=int(existing["id"]),
+        already_existed=True,
+        source_name=existing["source_name"],
+        track=existing.get("track"),
+        car=existing.get("car"),
+        lap_count=int(existing.get("lap_count") or 0),
+        original_bytes=int(existing.get("original_size_bytes") or original_size),
+        stored_bytes=int(existing.get("stored_size_bytes") or 0),
+        source_deleted=False,
+        message=f"Already in library as session #{existing['id']}.",
     )
 
 

@@ -6,7 +6,7 @@ import shutil
 
 import pytest
 
-from conftest import DB_PATH, ROOT, needs_library, session_by_source, session_df
+from conftest import ROOT, copy_library_db, needs_library, session_by_source, session_df
 
 pytestmark = needs_library
 
@@ -61,7 +61,7 @@ def test_recommendation_lifecycle_end_to_end(tmp_path):
     names = ["Catalunya_FP1.csv", "Catalunya_FP2.csv", "Catalunya_Q1.csv", "Catalunya_Q2.csv", "Catalunya_Q3.csv"]
     sessions = {n: session_by_source(n) for n in names}
     (tmp_path / "data" / "sessions").mkdir(parents=True)
-    shutil.copy(DB_PATH, tmp_path / "data" / "telemetry.db")
+    copy_library_db(tmp_path / "data" / "telemetry.db")
     # Every session on the track: the journal evaluates all of them (later imports included).
     for path in list_track_sessions("Catalunya", ROOT)["telemetry_path"]:
         shutil.copy(ROOT / path, tmp_path / path)

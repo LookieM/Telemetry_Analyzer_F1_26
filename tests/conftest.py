@@ -20,6 +20,18 @@ DB_PATH = ROOT / "data" / "telemetry.db"
 needs_library = pytest.mark.skipif(not DB_PATH.exists(), reason="personal telemetry library (data/) not present")
 
 
+def copy_library_db(dst: Path) -> None:
+    """Consistent copy of the library DB (it runs in WAL mode, so a plain file copy can miss writes)."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
+    out = sqlite3.connect(str(dst))
+    try:
+        src.backup(out)
+    finally:
+        out.close()
+        src.close()
+
+
 def session_by_source(name: str) -> dict:
     con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row

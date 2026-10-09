@@ -180,15 +180,23 @@ def ensure_session_meta_schema(app_root: Path | None = None) -> None:
         )
 
 
+_SCHEMA_READY: set[str] = set()  # DB paths whose base schema was already created in this process
+
+
 @contextmanager
 def connect(app_root: Path | None = None) -> Iterator[sqlite3.Connection]:
     path = db_path(app_root)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
     conn.execute("PRAGMA foreign_keys = ON")
     try:
-        conn.executescript(SCHEMA)
+        key = str(path.resolve())
+        if key not in _SCHEMA_READY:
+            conn.execute("PRAGMA journal_mode = WAL")  # persistent; lets readers and the recorder coexist
+            conn.executescript(SCHEMA)
+            _SCHEMA_READY.add(key)
         yield conn
         conn.commit()
     finally:
