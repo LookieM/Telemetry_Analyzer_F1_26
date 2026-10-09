@@ -19,6 +19,8 @@ MIN_LAP_SAMPLES = 250
 # Relative to session median — catches short outliers when length is unknown.
 MIN_REL_MEDIAN = 0.68
 MAX_REL_MEDIAN = 1.85
+# Lap-time cost of carrying fuel (matches the fuel term in setup_tweaker).
+FUEL_S_PER_KG = 0.030
 
 
 def session_meta(df: pd.DataFrame) -> dict:
@@ -36,6 +38,13 @@ def session_meta(df: pd.DataFrame) -> dict:
     if "trackLength" in df.columns:
         meta["track_length"] = float(df["trackLength"].iloc[0])
     return meta
+
+
+def fuel_corrected_time(lap_time: float, fuel_kg: float | None, ref_kg: float = 5.0) -> float:
+    """Lap time re-expressed at `ref_kg` of fuel; unchanged when the fuel reading is unusable."""
+    if fuel_kg is None or not np.isfinite(fuel_kg) or fuel_kg <= 0:
+        return float(lap_time)
+    return float(lap_time) - (float(fuel_kg) - float(ref_kg)) * FUEL_S_PER_KG
 
 
 def _lap_end_time(lap_df: pd.DataFrame) -> float | None:

@@ -160,6 +160,15 @@ def import_csv(
         track_length_hint=meta.get("track_length"),
     )
 
+    if meta.get("track"):
+        # Score earlier setup advice and experiments against this new session.
+        try:
+            from .setup_log import evaluate_track
+
+            evaluate_track(str(meta["track"]), root)
+        except Exception:
+            pass  # the journal is a bonus; never fail an import because of it
+
     source_deleted = False
     if delete_source:
         path.unlink()

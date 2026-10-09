@@ -224,18 +224,65 @@ def has_telemetry_setup(df: pd.DataFrame | None, *, min_keys: int = 6) -> bool:
     return len(telemetry_setup_keys(df)) >= min_keys
 
 
+def _non_reset_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows where the garage channels read the post-session reset (both wings at 0)."""
+    if "wing_setup_0" in df.columns and "wing_setup_1" in df.columns:
+        w0 = pd.to_numeric(df["wing_setup_0"], errors="coerce").fillna(0.0)
+        w1 = pd.to_numeric(df["wing_setup_1"], errors="coerce").fillna(0.0)
+        return df.loc[~((w0 <= 0) & (w1 <= 0))]
+    return df
+
+
+def is_reset_setup(setup: dict[str, float] | None) -> bool:
+    """
+    True for the garbage garage the game logs after a session ends / on warm-up rows:
+    both wings at 0, or several key parameters pinned at their garage minimum.
+    """
+    if not setup:
+        return False
+    from .setup_tweaker import SETUP_PARAMS
+
+    fw, rw = setup.get("wing_setup_0"), setup.get("wing_setup_1")
+    if fw is not None and rw is not None and float(fw) <= 0 and float(rw) <= 0:
+        return True
+    mins = {p.key: p.min_v for p in SETUP_PARAMS}
+    pinned = 0
+    for key in ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1", "diff_onThrottle_setup"):
+        if key in setup and abs(float(setup[key]) - mins[key]) < 1e-6:
+            pinned += 1
+    return pinned >= 3
+
+
 def setup_from_telemetry(df: pd.DataFrame, lap: int | None = None) -> dict[str, float]:
-    """Garage dict read from setup channels on the focus lap (or whole session)."""
+    """
+    Garage dict read from setup channels on the focus lap (or whole session).
+
+    The last (incomplete) lap of an export logs a reset garage; those rows are skipped and,
+    if the lap has nothing else, the nearest earlier lap with a real garage is used instead.
+    """
     from .setup_tweaker import normalize_setup
 
     if df is None or df.empty or not has_telemetry_setup(df):
         return {}
-    slice_df = df
-    if lap is not None and "lap" in df.columns:
-        slice_df = df[df["lap"] == lap]
-        if slice_df.empty:
-            slice_df = df
-    return normalize_setup(mean_setup(slice_df))
+    clean = _non_reset_rows(df)
+    if clean.empty:
+        return {}
+    if lap is None or "lap" not in df.columns:
+        return normalize_setup(mean_setup(clean))
+
+    candidates = [clean[clean["lap"] == lap]]
+    others = sorted((int(x) for x in clean["lap"].unique() if int(x) != int(lap)), key=lambda x: (abs(x - int(lap)), x))
+    earlier = [x for x in others if x < int(lap)]
+    later = [x for x in others if x > int(lap)]
+    for other in earlier + later:
+        candidates.append(clean[clean["lap"] == other])
+    for sl in candidates:
+        if sl.empty:
+            continue
+        setup = normalize_setup(mean_setup(sl))
+        if setup and not is_reset_setup(setup):
+            return setup
+    return normalize_setup(mean_setup(clean))
 
 
 def _is_missing_setup_value(key: str, value: float | None) -> bool:

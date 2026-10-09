@@ -410,6 +410,49 @@ def setup_summary_item(diag: LapDiagnosis, changes: list[Any], findings: list[st
     )
 
 
+def setup_followup_items(entries: list[dict[str, Any]]) -> list[CoachItem]:
+    """Coach callouts for earlier garage advice that this session can now judge (setup_log.followup_entries)."""
+    items: list[CoachItem] = []
+    for entry in entries:
+        rec, app, exp = entry["rec"], entry["application"], entry["experiment"]
+        n_total = len(rec["changes"])
+        verdict = (exp or {}).get("verdict")
+        if app.frac is not None and app.frac < 0.5:
+            title = f"Setup advice from #{rec['session_id']} was mostly not applied"
+            detail = f"{len(app.applied)}/{n_total} moves made — still open: {entry['symptom']}."
+            severity, prio = "info", 28.0
+        elif verdict == "worse":
+            title = f"Garage change since #{rec['session_id']} cost time"
+            detail = f"{exp['pace_delta']:+.3f}s fuel-corrected (noise ±{exp['noise']:.2f}s) — consider backing it out."
+            severity, prio = "warning", 34.0
+        elif verdict == "better":
+            title = f"Garage change since #{rec['session_id']} worked"
+            detail = f"{exp['pace_delta']:+.3f}s fuel-corrected — keep it and refine from here."
+            severity, prio = "info", 30.0
+        else:
+            title = f"Garage change since #{rec['session_id']} is inconclusive"
+            if exp and verdict == "neutral":
+                detail = f"{exp['pace_delta']:+.3f}s is inside the ±{exp['noise']:.2f}s noise."
+            else:
+                detail = "Runs were not directly comparable (laps, tyres or conditions differ)."
+            severity, prio = "info", 20.0
+        items.append(
+            _item(
+                id=f"setup:followup:{rec['id']}",
+                source="setup",
+                domain="setup",
+                action_kind="setup",
+                severity=severity,
+                priority=prio,
+                confidence=0.7 if exp else 0.4,
+                title=title,
+                detail=detail,
+                related_keys=["setup", "journal"],
+            )
+        )
+    return items
+
+
 def collect_coach_items(
     df: pd.DataFrame,
     focus_lap: int,

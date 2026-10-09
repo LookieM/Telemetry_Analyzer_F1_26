@@ -51,6 +51,7 @@ class SetupChange:
     before: float
     after: float
     reason: str
+    locked: bool = False  # kept outside the lever budget (e.g. reverting a change that cost time)
 
 
 @dataclass
@@ -403,17 +404,20 @@ def _enforce_change_budget(
     max_groups: int = 3,
     *,
     reserve_diff: bool = False,
+    first_groups: tuple[str, ...] = (),
 ) -> list[SetupChange]:
     """
-    Keep at most max_groups mechanical lever groups (+ fuel always kept).
+    Keep at most max_groups mechanical lever groups (+ fuel and locked reverts always kept).
 
-    Order: brakes → aero OR mech (not both) → diff OR tyres.
+    Order: brakes → aero OR mech (not both) → diff OR tyres. `first_groups` (levers that
+    already worked on this track) jump the queue.
     """
     fuel = [c for c in changes if c.key == "fuel_setup"]
     camber = [c for c in changes if c.key.startswith("camber")]
-    mech = [c for c in changes if c.key != "fuel_setup" and not c.key.startswith("camber")]
+    locked = [c for c in changes if c.locked and c.key != "fuel_setup" and not c.key.startswith("camber")]
+    mech = [c for c in changes if c.key != "fuel_setup" and not c.key.startswith("camber") and not c.locked]
     if not mech:
-        return fuel
+        return fuel + camber + locked
 
     groups: dict[str, list[SetupChange]] = {}
     for c in mech:
@@ -423,6 +427,8 @@ def _enforce_change_budget(
     order = ["brakes", "aero", "mech", "diff", "tyres", "other"]
     if reserve_diff and "diff" in groups:
         order = ["brakes", "diff", "aero", "mech", "tyres", "other"]
+    if first_groups:
+        order = [g for g in first_groups if g in order] + [g for g in order if g not in first_groups]
     kept: list[SetupChange] = []
     used: set[str] = set()
 
@@ -438,7 +444,37 @@ def _enforce_change_budget(
         used.add(g)
         kept.extend(groups[g])
 
-    return fuel + camber + kept
+    return fuel + camber + locked + kept
+
+
+def _merge_same_key(changes: list[SetupChange]) -> list[SetupChange]:
+    """One row per parameter: first `before` -> last `after`, reasons joined. Moves that cancel out vanish."""
+    order: list[str] = []
+    by_key: dict[str, list[SetupChange]] = {}
+    for c in changes:
+        if c.key not in by_key:
+            order.append(c.key)
+        by_key.setdefault(c.key, []).append(c)
+    merged: list[SetupChange] = []
+    for key in order:
+        rows = by_key[key]
+        if len(rows) == 1:
+            merged.append(rows[0])
+            continue
+        if abs(rows[-1].after - rows[0].before) < 1e-9:
+            continue
+        reasons = list(dict.fromkeys(r.reason for r in rows))
+        merged.append(
+            SetupChange(
+                key=key,
+                label=rows[0].label,
+                before=rows[0].before,
+                after=rows[-1].after,
+                reason=" + ".join(reasons),
+                locked=any(r.locked for r in rows),
+            )
+        )
+    return merged
 
 
 def _reapply_changes(setup: dict[str, float], changes: list[SetupChange]) -> None:
@@ -542,6 +578,145 @@ def _guard_track_wings_inplace(
     return touched
 
 
+# Levers the builder may keep pushing once they have demonstrably helped on this track.
+_CONTINUE_KEYS = (
+    "wing_setup_0",
+    "wing_setup_1",
+    "arb_setup_0",
+    "arb_setup_1",
+    "diff_onThrottle_setup",
+    "diff_offThrottle_setup",
+    "toe_setup_0",
+    "toe_setup_1",
+)
+_REVERT_MAX_MOVES = 4
+
+
+def _step_of(key: str) -> float:
+    for p in SETUP_PARAMS:
+        if p.key == key:
+            return float(p.step)
+    return 1.0
+
+
+def _revert_last_experiment(
+    setup: dict[str, float],
+    history: Any,
+    changes: list[SetupChange],
+    findings: list[str],
+) -> None:
+    """If the garage you are on is the 'after' of an experiment that was clearly slower, back it out."""
+    exp = history.last_experiment
+    if not exp or exp.get("verdict") != "worse":
+        return
+    moves = [c for c in exp.get("changes") or [] if c.get("delta") is not None and c["key"] in setup]
+    sid_a, sid_b = exp.get("from_session_id"), exp.get("to_session_id")
+    pace = float(exp.get("pace_delta") or 0.0)
+    if not moves:
+        return
+    if len(moves) > _REVERT_MAX_MOVES:
+        findings.append(
+            f"Session #{sid_b} was {pace:+.3f}s vs #{sid_a} after {len(moves)} garage moves — too many to "
+            "pin on one lever; use the Best verified base to go back."
+        )
+        return
+    reverted = []
+    for m in moves:
+        key, before, after = m["key"], float(m["from"]), float(m["to"])
+        # Only revert what is still sitting at the slower value.
+        if abs(float(setup[key]) - after) <= 0.5 * abs(after - before):
+            n = len(changes)
+            _apply(setup, key, before, f"Back out: this move cost {pace:+.3f}s (session #{sid_b} vs #{sid_a})", changes)
+            if len(changes) > n:
+                changes[-1].locked = True
+                reverted.append(_label(key))
+    if reverted:
+        findings.append(
+            f"Last experiment (#{sid_a} → #{sid_b}) was {pace:+.3f}s slower — backed out: {', '.join(reverted)}."
+        )
+
+
+def _direction_of(change: SetupChange) -> int:
+    return 1 if change.after > change.before else -1
+
+
+def _apply_history(
+    base: dict[str, float],
+    changes: list[SetupChange],
+    history: Any,
+    symptoms: dict[str, Any],
+    findings: list[str],
+) -> tuple[list[SetupChange], tuple[str, ...]]:
+    """Drop levers that hurt on this symptom, keep pushing levers that helped, note ignored advice."""
+    kept: list[SetupChange] = []
+    for c in changes:
+        if c.locked or c.key == "fuel_setup" or abs(c.after - c.before) < 1e-9:
+            kept.append(c)
+            continue
+        st = history.should_avoid(c.key, _direction_of(c))
+        if st is None:
+            kept.append(c)
+            continue
+        where = f" (session #{st.last_hurt[1]} vs #{st.last_hurt[0]})" if st.last_hurt else ""
+        findings.append(
+            f"Skipped {c.label} {'+' if _direction_of(c) > 0 else '−'}: it made this symptom slower before{where}."
+        )
+
+    first: list[str] = []
+    for c in kept:
+        if not c.locked and c.key != "fuel_setup" and history.worked(c.key, _direction_of(c)):
+            group = _change_group(c.key, c.reason)
+            if group not in first:
+                first.append(group)
+
+    issue = symptoms.get("issue")
+    if issue and issue != "balanced":
+        touched = {c.key for c in kept}
+        candidates = sorted(
+            ((k, st) for k, st in history.levers.items() if k[0] in _CONTINUE_KEYS and history.worked(*k)),
+            key=lambda kv: kv[1].helped,
+            reverse=True,
+        )
+        for (key, direction), st in candidates:
+            if key in touched or key not in base or history.should_avoid(key, direction):
+                continue
+            grid = _step_of(key)
+            step = max(grid, abs(st.last_delta or 0.0) * 0.5)
+            step = round(step / grid) * grid or grid
+            before = float(base[key])
+            after = _clip(key, before + direction * step)
+            if abs(after - before) < 1e-9:
+                continue
+            gain = f" ({st.mean_pace:+.3f}s)" if st.mean_pace is not None else ""
+            kept.append(
+                SetupChange(
+                    key=key,
+                    label=_label(key),
+                    before=before,
+                    after=after,
+                    reason=f"Continue: this move helped the same symptom before{gain}",
+                )
+            )
+            findings.append(f"Continuing {_label(key)} {'+' if direction > 0 else '−'} — it helped here before.")
+            group = _change_group(key, "")
+            if group not in first:
+                first.append(group)
+            break  # one continuation per build keeps the package small
+
+    rec = history.pending_rec
+    if rec:
+        issue_then = (rec.get("diagnosis") or {}).get("issue")
+        status = rec.get("status")
+        if status in ("ignored", "partial") and issue_then and issue_then == issue:
+            missed = [_label(c["key"]) for c in rec.get("changes") or []][:4]
+            findings.append(
+                f"Advice from session #{rec['session_id']} was {status} "
+                f"({(rec.get('applied_frac') or 0) * 100:.0f}% applied) and the {issue} is still there"
+                + (f" — advised: {', '.join(missed)}." if missed else ".")
+            )
+    return kept, tuple(first)
+
+
 def build_setup_from_practice(
     df: pd.DataFrame,
     session_setup: dict[str, Any] | None,
@@ -553,10 +728,15 @@ def build_setup_from_practice(
     conditions: str | None = None,
     diagnosis: Any | None = None,
     corner_cmp: pd.DataFrame | None = None,
+    history: Any | None = None,
+    base: str | None = None,
 ) -> BuiltSetup:
     """
     Start from the session garage (what you ran), fill missing keys from the
     track typical, then apply a small diagnosis-led tweak.
+
+    `base`: "session" (default), "typical" or "best_verified". With a `history`
+    (setup_log.SetupHistory) the build also learns from earlier experiments on the track.
     """
     from .conditions import STATE_LABELS, _as_state, is_wet_surface, weather_banner
     from .loader import resolve_session_setup
@@ -573,7 +753,13 @@ def build_setup_from_practice(
         typical_setup=typical_setup,
     )
 
-    if prefer_typical_base and typical:
+    base_mode = base or ("typical" if prefer_typical_base else "session")
+    verified = (history.best_verified if history is not None else None) if base_mode == "best_verified" else None
+    if verified:
+        setup = deepcopy(verified["setup"])
+        base_source = f"Best verified setup (session #{verified['session_id']}, {verified['pace']:.3f}s fuel-corrected)"
+        findings = [f"Started from the fastest verified {variant} setup on this track ({verified['laps']} laps)."]
+    elif base_mode == "typical" and typical:
         setup = deepcopy(typical["setup"])
         base_source = f"Typical {track_n} {typical['variant']} ({STATE_LABELS[state]})"
         findings = [typical["notes"], "Started from the track typical (not your session garage)."]
@@ -652,6 +838,8 @@ def build_setup_from_practice(
         )
 
     setup_before_changes = deepcopy(setup)
+    if history is not None:
+        _revert_last_experiment(setup, history, changes, findings)
 
     findings.append(f"Tuned from practice lap {symptoms['lap']} ({symptoms['lap_time']:.3f}s).")
     if lap_diag is not None:
@@ -690,13 +878,19 @@ def build_setup_from_practice(
     elif variant == "quali":
         _apply(setup, "fuel_setup", 5.0, "Quali fuel — garage minimum (5 kg)", changes)
 
+    first_groups: tuple[str, ...] = ()
+    if history is not None:
+        changes, first_groups = _apply_history(setup_before_changes, changes, history, symptoms, findings)
+
     reserve_diff = issue == "oversteer" and phase in ("exit", "all", "entry+exit")
     pre_n = len([c for c in changes if c.key != "fuel_setup"])
-    changes = _enforce_change_budget(changes, max_groups=3, reserve_diff=reserve_diff)
+    changes = _enforce_change_budget(changes, max_groups=3, reserve_diff=reserve_diff, first_groups=first_groups)
     post_n = len([c for c in changes if c.key != "fuel_setup"])
-    if post_n < pre_n:
+    if post_n < pre_n or history is not None:
+        # Rebuild from the untouched base so dropped / added moves are reflected exactly.
         setup = deepcopy(setup_before_changes)
         _reapply_changes(setup, changes)
+    if post_n < pre_n:
         findings.append(
             f"Kept {post_n} coordinated garage move(s) — brakes first, then one aero/mech lever, then diff/tyres."
         )
@@ -711,6 +905,7 @@ def build_setup_from_practice(
         )
     _enforce_camber_meta_inplace(setup)
 
+    changes = _merge_same_key(changes)
     for ch in changes:
         if ch.key in setup:
             ch.after = float(setup[ch.key])

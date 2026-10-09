@@ -79,6 +79,24 @@ def compute_setup_fingerprint(setup: dict[str, Any] | None) -> str | None:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# Keys that do not describe the car itself: fuel is a load, front_brake_bias mirrors brake_bias_setup.
+_NON_MECHANICAL_KEYS = frozenset({"fuel_setup", "front_brake_bias", "tyre_compound"})
+
+
+def mech_setup(setup: dict[str, Any] | None) -> dict[str, Any]:
+    """Setup without fuel load / duplicate channels — what actually changes the car's behaviour."""
+    return {k: v for k, v in normalize_setup_dict(setup).items() if k not in _NON_MECHANICAL_KEYS}
+
+
+def mech_fingerprint(setup: dict[str, Any] | None) -> str | None:
+    """Fingerprint of the mechanical setup only (fuel changes alone do not create a new setup)."""
+    mech = mech_setup(setup)
+    if not mech:
+        return None
+    payload = json.dumps(mech, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def parse_setup_json(raw: str | dict | None) -> dict[str, Any]:
     if raw is None:
         return {}
@@ -143,6 +161,24 @@ def fingerprint_for_session(session: dict[str, Any] | None) -> str | None:
     return compute_setup_fingerprint(parse_setup_json(session.get("setup_json")))
 
 
+def list_track_sessions(
+    track: str,
+    app_root: Path | None = None,
+    session_type: str | None = None,
+) -> pd.DataFrame:
+    """
+    Sessions on a track, whatever alias they were stored under (e.g. 'Catalunya' vs 'Barcelona').
+
+    Newest first, like list_sessions.
+    """
+    target = normalize_track_name(track) or track
+    sessions = list_sessions(app_root, session_type=session_type)
+    if sessions.empty or "track" not in sessions.columns:
+        return sessions
+    keep = sessions["track"].map(lambda t: (normalize_track_name(t) or t) == target)
+    return sessions[keep].reset_index(drop=True)
+
+
 def setup_timeline(
     track: str,
     app_root: Path | None = None,
@@ -156,7 +192,7 @@ def setup_timeline(
     """
     ensure_session_meta_schema(app_root)
     track = normalize_track_name(track) or track
-    sessions = list_sessions(app_root, track=track, session_type=session_type)
+    sessions = list_track_sessions(track, app_root, session_type=session_type)
     if sessions.empty:
         return pd.DataFrame()
 

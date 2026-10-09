@@ -16,6 +16,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .metrics import FUEL_S_PER_KG
+
 # F1 26 / SRT: pressures stored as Pa; garage UI uses psi
 PA_PER_PSI = 6894.757
 PSI_SCALE = 1.0 / PA_PER_PSI
@@ -428,7 +430,7 @@ def estimate_setup_delta(
             est = pen_v - pen_b
             group = "tyres"
         elif key == "fuel_setup":
-            est = du * 0.030
+            est = du * FUEL_S_PER_KG
             group = "fuel"
         elif p.group == "Brakes":
             opt = 0.56

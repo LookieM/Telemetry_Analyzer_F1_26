@@ -371,6 +371,23 @@ def delete_session(session_id: int, app_root: Path | None = None) -> None:
     with connect(app_root) as conn:
         conn.execute("DELETE FROM laps WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        # Setup journal tables are created lazily (setup_log.py); clean them when present.
+        for sql in (
+            "DELETE FROM setup_experiments WHERE from_session_id = ? OR to_session_id = ?",
+            "DELETE FROM setup_recommendations WHERE session_id = ?",
+            # Advice judged against this session goes back to waiting for a follow-up
+            # (evaluate_track re-matches it when a later session exists).
+            "UPDATE setup_recommendations SET status = 'pending', followup_session_id = NULL, "
+            "applied_frac = NULL WHERE followup_session_id = ?",
+        ):
+            try:
+                conn.execute(sql, (session_id,) * sql.count("?"))
+            except sqlite3.OperationalError:
+                pass
+        try:
+            conn.execute("DELETE FROM setup_eval_state")
+        except sqlite3.OperationalError:
+            pass
     if tel.exists():
         tel.unlink()
 

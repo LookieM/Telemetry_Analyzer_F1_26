@@ -87,9 +87,18 @@ from telemetry.session_compare import (
     session_label,
 )
 from telemetry.setup_builder import build_setup_from_practice, changes_frame
-from telemetry.coach import CoachItem, coach_feed_for_session, setup_summary_item
+from telemetry.coach import CoachItem, coach_feed_for_session, setup_followup_items, setup_summary_item
 from telemetry.diagnosis import build_session_diagnosis
 from telemetry.setup_history import backfill_setup_fingerprints, setup_timeline
+from telemetry.setup_eval import NOISE_FLOOR, load_session_runs
+from telemetry.setup_journal_ui import (
+    experiments_frame,
+    render_compare_panel,
+    render_followup_cards,
+    render_runs_panel,
+)
+from telemetry.setup_log import evaluate_all, followup_entries, load_history, save_recommendation
+from telemetry.runs import best_run
 from telemetry.setup_tweaker import normalize_setup, pa_to_psi
 from telemetry.ers_2026_ui import render_2026_channels_panel, render_stint_windows_panel
 from telemetry.stint_coach import session_stint_table, stint_saving_insights
@@ -1310,6 +1319,14 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             "then applies a small coordinated tweak. "
             "Browse any track without a session via sidebar **Garage**."
         )
+        render_followup_cards(session, APP_ROOT)
+        with st.expander("Runs in this session", expanded=False):
+            render_runs_panel(session, APP_ROOT)
+        with st.expander("Compare with an earlier session (A/B)", expanded=False):
+            if not track:
+                st.caption("Track unknown for this session.")
+            elif st.toggle("Load comparison", key=f"cmp_load_{sid}"):
+                render_compare_panel(session, track, APP_ROOT, key=f"cmp_{sid}")
         if track:
             with st.expander("Setup evolution on this track", expanded=False):
                 tl = setup_timeline(track, APP_ROOT)
@@ -1339,6 +1356,10 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                         )
                     st.dataframe(disp, use_container_width=True, hide_index=True)
                     st.caption("Best lap from each session is linked to that run’s setup fingerprint.")
+                    exp_df = experiments_frame(track, APP_ROOT)
+                    if not exp_df.empty:
+                        st.markdown("**Measured experiments** (fuel-corrected, same track state)")
+                        st.dataframe(exp_df, use_container_width=True, hide_index=True)
 
         ui_id = f"sess_{sid}"
         state_key = f"setup_proposed_{sid}_{focus_lap}"
@@ -1370,6 +1391,15 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
             st.write("")
             st.write("")
             build_clicked = st.button("Build from this practice", type="primary", key=f"setup_build_{sid}")
+
+        setup_base = st.radio(
+            "Start from",
+            ["Session garage", "Best verified", "Track typical"],
+            horizontal=True,
+            key=f"setup_base_{sid}",
+            help="Best verified = the fastest run on this track (enough laps, same track state, fuel-corrected). "
+            "Builder also learns from earlier experiments: it backs out moves that cost time and skips levers that hurt.",
+        )
 
         typical_pack = get_typical_setup(setup_track, setup_variant.lower(), conditions=setup_conditions)
 
@@ -1430,16 +1460,60 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 track=setup_track or track,
                 track_length=track_length,
             )
+            mode_key = setup_variant.lower()
+            cur_run = best_run(load_session_runs(sid, APP_ROOT), mode_key)
+            history = load_history(
+                setup_track or track,
+                mode_key,
+                label_to_state(setup_wx),
+                issue=session_diag.primary_issue,
+                phase=session_diag.phase,
+                compound=cur_run.compound if cur_run else None,
+                app_root=APP_ROOT,
+                before_session_id=sid,
+            )
+            base_mode = {"Session garage": "session", "Best verified": "best_verified", "Track typical": "typical"}[
+                setup_base
+            ]
             built = build_setup_from_practice(
                 df,
                 baseline,
                 setup_track or track,
-                variant=setup_variant.lower(),
+                variant=mode_key,
                 lap=focus_lap,
-                prefer_typical_base=False,
                 conditions=setup_conditions,
                 diagnosis=session_diag,
                 corner_cmp=corner_cmp,
+                history=history,
+                base=base_mode,
+            )
+            history_notes: list[str] = []
+            if base_mode == "best_verified" and not history.best_verified:
+                history_notes.append("No verified run on this track yet — started from the session garage instead.")
+            bv = history.best_verified
+            if bv and cur_run and bv["session_id"] != sid and base_mode != "best_verified":
+                cur_pace = cur_run.best_corrected if mode_key == "quali" else cur_run.median_corrected
+                if bv["pace"] < cur_pace - NOISE_FLOOR[mode_key]:
+                    history_notes.append(
+                        f"Session #{bv['session_id']} ran {cur_pace - bv['pace']:.3f}s faster (fuel-corrected) — "
+                        "pick **Best verified** to start from that garage."
+                    )
+            save_recommendation(
+                session_id=sid,
+                track=setup_track or track,
+                variant=mode_key,
+                conditions=setup_conditions,
+                base_setup=baseline,
+                proposed_setup=built.setup,
+                changes=built.changes,
+                diagnosis={
+                    "issue": session_diag.primary_issue,
+                    "phase": session_diag.phase,
+                    "strength": session_diag.strength,
+                    "headline": session_diag.headline,
+                    "balance": session_diag.symptoms,
+                },
+                app_root=APP_ROOT,
             )
             st.session_state[f"setup_coach_item_{sid}"] = setup_summary_item(
                 session_diag, built.changes, built.findings
@@ -1452,6 +1526,10 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
                 notes.append(f"Est. vs your session setup: {built.est_dt_vs_session:+.3f}s")
             if built.est_dt_vs_typical is not None:
                 notes.append(f"Est. vs track typical: {built.est_dt_vs_typical:+.3f}s")
+            notes.extend(history_notes)
+            notes.append(
+                "Saved to the setup journal — import your next session on this track and it will be scored against this advice."
+            )
             st.session_state[f"setup_build_notes_{sid}"] = notes
             st.session_state[f"setup_build_changes_{sid}"] = changes_frame(built).to_dict("records")
             st.rerun()
@@ -1537,6 +1615,8 @@ def render_analysis(session: dict, df: pd.DataFrame, summary: pd.DataFrame, outl
         setup_item = st.session_state.get(f"setup_coach_item_{sid}")
         if setup_item is not None:
             extra_setup = [setup_item]
+
+        extra_setup = extra_setup + setup_followup_items(followup_entries(sid, APP_ROOT))
 
         diag, top_items, rest_items = coach_feed_for_session(
             df,
@@ -1656,6 +1736,9 @@ def main() -> None:
             st.session_state["progress_backfilled"] = n
     if "setup_fp_backfilled" not in st.session_state:
         st.session_state["setup_fp_backfilled"] = backfill_setup_fingerprints(APP_ROOT)
+    if "setup_journal_evaluated" not in st.session_state:
+        with st.spinner("Scoring setup experiments…"):
+            st.session_state["setup_journal_evaluated"] = evaluate_all(APP_ROOT)
 
     stats = library_stats(APP_ROOT)
     s1, s2, s3, s4 = st.columns(4)
@@ -1694,6 +1777,7 @@ def main() -> None:
             if st.button("Delete session from library", type="secondary"):
                 delete_session(int(session["id"]), APP_ROOT)
                 st.session_state.pop("selected_session_id", None)
+                st.session_state.pop("setup_journal_evaluated", None)
                 st.cache_data.clear()
                 st.rerun()
 
