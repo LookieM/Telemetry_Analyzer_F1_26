@@ -10,24 +10,26 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from .compounds import Allocation, c_label, get_allocation, softness
+from .compounds import Allocation, get_allocation
 from .corners import normalize_track_name
 from .strategy import (
     CompoundSpec,
     Plan,
     RaceParams,
-    actual_plan,
     apply_overrides,
     clear_overrides,
     default_params,
     game_pit_windows,
     lap_times,
     load_overrides,
+    manual_specs,
     optimise,
     race_calls,
     review_race,
+    review_unavailable_reason,
     save_overrides,
     sensitivity,
+    shortlist,
     specs_from_model,
 )
 from .tyres import TrackTyreModel, track_compound_model
@@ -36,22 +38,6 @@ from .ui.uplot import pane, series, stint_timeline, trace_chart
 
 TOP_PLANS = 8
 CHART_PLANS = 4
-# Placeholder model for a track with no long runs yet (one softness step apart; edit before use).
-_MANUAL = {"S": (-0.5, 0.25, 6.0), "M": (0.0, 0.15, 4.5), "H": (0.45, 0.09, 3.0)}
-
-
-def _manual_specs(alloc: Allocation) -> list[CompoundSpec]:
-    out = []
-    for code, role in sorted(alloc.roles.items(), key=lambda kv: -softness(kv[0])):
-        if role not in _MANUAL:
-            continue
-        off, deg, wear = _MANUAL[role]
-        out.append(CompoundSpec(code, alloc.label(code), alloc.color(code), off, deg, wear, 0.3, source="manual · fill in"))
-    if not out:  # nothing known about the track: generic C3/C2/C1
-        for code, role in ((18, "S"), (19, "M"), (20, "H")):
-            off, deg, wear = _MANUAL[role]
-            out.append(CompoundSpec(code, alloc.label(code) if alloc.roles else f"{role} (generic)", alloc.color(code), off, deg, wear, 0.3, source="manual · fill in"))
-    return out
 
 
 def _plan_text(plan: Plan, specs: dict[int, CompoundSpec]) -> str:
@@ -93,19 +79,6 @@ def _timeline_rows(plans: list[tuple[str, Plan]], specs: dict[int, CompoundSpec]
         delta = p.race_time - best_time
         rows.append({"label": label, "stints": segs, "note": "best" if abs(delta) < 1e-6 else f"{delta:+.1f} s"})
     return rows
-
-
-def _no_review_reason(summary: pd.DataFrame, by_code: dict[int, CompoundSpec], params: RaceParams, state: str) -> str:
-    plan = actual_plan(summary)
-    if plan is None:
-        return "No race review: a stint in this session has no compound logged."
-    outside = sorted({c for c in plan.compounds if c not in by_code})
-    if outside:
-        names = ", ".join(c_label(c) for c in outside)
-        return f"No race review: this race used {names}, which the {state} model does not include — pick that track state."
-    if sum(plan.stints) != params.laps:
-        return f"No race review: race laps are set to {params.laps} but this race ran {sum(plan.stints)}."
-    return "No race review for this session."
 
 
 def _params_form(params: RaceParams, key: str) -> RaceParams:
@@ -233,7 +206,7 @@ def render_strategy(
     alloc = get_allocation(track_n, app_root)
     with st.spinner("Building the compound model from your library…"):
         model: TrackTyreModel = track_compound_model(track_n, state, app_root, wear_limit=wear_limit())
-    specs0 = specs_from_model(model) if model.compounds else _manual_specs(alloc)
+    specs0 = specs_from_model(model) if model.compounds else manual_specs(alloc)
     notes = {c: m.note for c, m in model.compounds.items() if m.note}
     params0 = default_params(model, track_n)
     saved_p, saved_c = load_overrides(track_n, state, app_root)
@@ -272,16 +245,7 @@ def render_strategy(
     m[2].metric("Box", _windows_text(best))
     m[3].metric("Start fuel", f"{params.start_fuel_kg:.1f} kg", f"{params.fuel_per_lap_kg:.2f} kg/lap + {params.fuel_margin_laps:g} lap", delta_color="off", delta_arrow="off")
 
-    # Best plan per stop count always shown, then the fastest others.
-    shown: list[Plan] = []
-    for stops in sorted({p.stops for p in plans}):
-        shown.append(next(p for p in plans if p.stops == stops))
-    for p in plans:
-        if len(shown) >= TOP_PLANS:
-            break
-        if p not in shown:
-            shown.append(p)
-    shown.sort(key=lambda p: p.race_time)
+    shown = shortlist(plans, TOP_PLANS)
     table = pd.DataFrame(
         [
             {
@@ -335,7 +299,7 @@ def render_strategy(
         )
     with tab_review:
         if review is None:
-            st.caption(_no_review_reason(summary, by_code, params, state) if is_race else
+            st.caption(review_unavailable_reason(summary, by_code, params, state) if is_race else
                        "Open a race session (with pit stops) to compare the strategy that was run with the model optimum.")
         else:
             r = st.columns(4)

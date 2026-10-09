@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from telemetry.db import ensure_session_meta_schema, init_db
 from telemetry.progress import ensure_progress_schema
 
-from .api import library
+from .api import imports, laps, library, settings, strategy, tyres
 from .config import REPO_ROOT, Config
 
 COOKIE = "telemetria_token"
@@ -47,7 +47,8 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
                 response.set_cookie(COOKIE, cfg.access_token, httponly=True, samesite="lax")
             return response
 
-    app.include_router(library.router, prefix="/api")
+    for module in (library, laps, tyres, strategy, settings, imports):
+        app.include_router(module.router, prefix="/api")
 
     if dist.is_dir():
         app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")

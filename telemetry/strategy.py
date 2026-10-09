@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .compounds import is_slick, softness
+from .compounds import Allocation, c_label, is_slick, softness
 from .corners import normalize_track_name
 from .db import connect
 from .metrics import FUEL_S_PER_KG
@@ -157,6 +157,24 @@ def default_params(model: TrackTyreModel, track: str | None = None) -> RaceParam
         sc_pit_factor=model.sc_pit_factor or RaceParams.sc_pit_factor,
     )
 
+
+# Placeholder model for a track with no long runs yet (one softness step apart; edit before use).
+_MANUAL = {"S": (-0.5, 0.25, 6.0), "M": (0.0, 0.15, 4.5), "H": (0.45, 0.09, 3.0)}
+
+
+def manual_specs(alloc: Allocation) -> list[CompoundSpec]:
+    """Editable placeholder compound model for a track the library has no long runs on."""
+    out = []
+    for code, role in sorted(alloc.roles.items(), key=lambda kv: -softness(kv[0])):
+        if role not in _MANUAL:
+            continue
+        off, deg, wear = _MANUAL[role]
+        out.append(CompoundSpec(code, alloc.label(code), alloc.color(code), off, deg, wear, 0.3, source="manual · fill in"))
+    if not out:  # nothing known about the track: generic C3/C2/C1
+        for code, role in ((18, "S"), (19, "M"), (20, "H")):
+            off, deg, wear = _MANUAL[role]
+            out.append(CompoundSpec(code, alloc.label(code) if alloc.roles else f"{role} (generic)", alloc.color(code), off, deg, wear, 0.3, source="manual · fill in"))
+    return out
 
 
 def ensure_overrides_schema(app_root: Path | None = None) -> None:
@@ -347,6 +365,20 @@ def lap_times(plan: Plan, specs: list[CompoundSpec], params: RaceParams) -> np.n
     return t
 
 
+def shortlist(plans: list[Plan], n: int = 8) -> list[Plan]:
+    """Best plan per stop count always, then the fastest others, up to `n`; fastest first."""
+    shown: list[Plan] = []
+    for stops in sorted({p.stops for p in plans}):
+        shown.append(next(p for p in plans if p.stops == stops))
+    for p in plans:
+        if len(shown) >= n:
+            break
+        if p not in shown:
+            shown.append(p)
+    shown.sort(key=lambda p: p.race_time)
+    return shown
+
+
 # --------------------------------------------------------------------------- sensitivity
 
 
@@ -532,6 +564,20 @@ def actual_plan(summary: pd.DataFrame) -> Plan | None:
     firsts[0] = 0
     lengths = tuple(int(b - a) for a, b in zip(firsts, firsts[1:]))
     return Plan(compounds=tuple(int(s.compound) for s in stints), stints=lengths, race_time=float(summary["lap_time"].sum()))
+
+
+def review_unavailable_reason(summary: pd.DataFrame, specs_by_code: dict[int, CompoundSpec], params: RaceParams, state: str) -> str:
+    """Why `review_race` returned None for this race."""
+    plan = actual_plan(summary)
+    if plan is None:
+        return "No race review: a stint in this session has no compound logged."
+    outside = sorted({c for c in plan.compounds if c not in specs_by_code})
+    if outside:
+        names = ", ".join(c_label(c) for c in outside)
+        return f"No race review: this race used {names}, which the {state} model does not include — pick that track state."
+    if sum(plan.stints) != params.laps:
+        return f"No race review: race laps are set to {params.laps} but this race ran {sum(plan.stints)}."
+    return "No race review for this session."
 
 
 def review_race(summary: pd.DataFrame, specs: list[CompoundSpec], params: RaceParams) -> RaceReview | None:
