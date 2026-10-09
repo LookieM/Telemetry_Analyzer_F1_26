@@ -8,7 +8,9 @@ from pathlib import Path
 def test_allocation_roundtrip(client):
     url = "/api/tracks/Bahrain/allocation"
     first = client.get(url).json()
-    assert {"track", "source", "soft", "medium", "hard", "roles", "compounds"} <= set(first)
+    assert {"track", "source", "soft", "medium", "hard", "roles", "compounds", "options"} <= set(first)
+    codes = [o["code"] for o in first["options"]]
+    assert codes[0] == 22 and 18 in codes and 7 not in codes  # softest first, slicks only
     put = client.put(url, json={"soft": 18, "medium": 19, "hard": 20}).json()
     assert (put["soft"], put["medium"], put["hard"], put["source"]) == (18, 19, 20, "manual")
     assert client.get(url).json()["roles"] == {"18": "S", "19": "M", "20": "H"}

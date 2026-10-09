@@ -1,0 +1,42 @@
+.tc-root {
+  width: 100%;
+  color: var(--text);
+}
+.tc-pane {
+  margin-bottom: 4px;
+}
+.tc-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 4px 0 0 58px;
+}
+.tc-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  padding: 12px 0;
+}
+.tc-root .u-legend {
+  font-size: 11px;
+  text-align: left;
+  margin: 0 0 0 54px;
+  padding: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.tc-root .u-legend.u-inline .u-series {
+  padding: 0 6px 0 0;
+}
+.tc-root .u-legend .u-value {
+  display: inline-block;
+  min-width: 4.2em;
+}
+.tc-root .u-select {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.tc-root .u-cursor-x,
+.tc-root .u-cursor-y {
+  border-color: var(--text-dim) !important;
+}

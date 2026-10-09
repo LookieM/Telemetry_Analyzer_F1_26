@@ -1,0 +1,28 @@
+.cg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  max-width: 560px;
+}
+.cg-card {
+  border-left: 6px solid var(--text-dim);
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+.cg-wheel {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.cg-temp {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.cg-detail {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}

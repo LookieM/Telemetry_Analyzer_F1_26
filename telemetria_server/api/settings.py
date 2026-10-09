@@ -8,7 +8,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from telemetry import strategy, tyres
-from telemetry.compounds import clear_allocation, get_allocation, set_allocation
+from telemetry.compounds import ACTUAL_COMPOUNDS, SLICK_CODES, clear_allocation, get_allocation, set_allocation, softness
 from telemetry.corners import normalize_track_name
 
 from ..serialization import to_jsonable
@@ -60,6 +60,10 @@ def _allocation(track: str, request: Request) -> dict[str, Any]:
             "hard": inv.get("H"),
             "roles": {str(c): r for c, r in alloc.roles.items()},
             "compounds": allocation_payload(alloc),
+            # Slick compounds a track can nominate, softest first (for the S / M / H pickers).
+            "options": [
+                {"code": c, "label": ACTUAL_COMPOUNDS[c]} for c in sorted(SLICK_CODES, key=softness, reverse=True)
+            ],
         }
     )
 

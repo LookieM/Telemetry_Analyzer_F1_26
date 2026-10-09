@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import threading
+from pathlib import Path
 import webbrowser
 
 import uvicorn
@@ -16,6 +17,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="telemetria_server")
     parser.add_argument("--host")
     parser.add_argument("--port", type=int)
+    parser.add_argument("--app-root", type=Path, help="library folder (overrides telemetria.toml)")
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
@@ -24,6 +26,9 @@ def main() -> None:
         cfg.host = args.host
     if args.port:
         cfg.port = args.port
+
+    if args.app_root:
+        cfg.app_root = args.app_root.resolve()
 
     if not args.no_browser:
         shown = "127.0.0.1" if cfg.host in ("0.0.0.0", "::") else cfg.host

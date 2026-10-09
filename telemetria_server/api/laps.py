@@ -116,6 +116,7 @@ def track_map(
     request: Request,
     lap: int,
     ref_lap: int | None = None,
+    ref_session: int | None = None,
     color: str = "speed",
     step: float = Query(2.0, ge=0.5, le=50.0),
 ) -> Any:
@@ -126,7 +127,15 @@ def track_map(
     cols = [*MAP_COLUMNS, "pos_x", "pos_y", "pos_z", "trackLength", *BASE_COLUMNS]
     df = load_columns(session_id, root, cols)
     focus_df = lap_or_404(df, lap, session_id)
-    ref_df = lap_or_404(df, ref_lap, session_id) if ref_lap is not None and ref_lap != lap else None
+    ref_id = ref_session if ref_session is not None else session_id
+    ref_df = None
+    if ref_lap is not None and (ref_id != session_id or ref_lap != lap):
+        if ref_id != session_id:
+            session_or_404(ref_id, root)
+            ref_all = load_columns(ref_id, root, [*MAP_COLUMNS, *BASE_COLUMNS])
+        else:
+            ref_all = df
+        ref_df = lap_or_404(ref_all, ref_lap, ref_id)
 
     track = normalize_track_name(session.get("track"))
     if "trackLength" in df.columns and df["trackLength"].notna().any():
@@ -157,6 +166,7 @@ def track_map(
             "session_id": session_id,
             "lap": lap,
             "ref_lap": ref_lap if ref_df is not None else None,
+            "ref_session": ref_id if ref_df is not None else None,
             "track": track,
             "track_length": track_length,
         }

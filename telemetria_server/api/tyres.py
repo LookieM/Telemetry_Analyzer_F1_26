@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from telemetry import channels, tyres
 from telemetry.compounds import Allocation, get_allocation
+from telemetry.conditions import _as_state
 from telemetry.corners import normalize_track_name
 
 from ..serialization import to_jsonable
@@ -80,6 +81,7 @@ def session_tyres(session_id: int, request: Request, wear_limit: float | None = 
         {
             "session_id": session_id,
             "track": track,
+            "state": _as_state(session.get("conditions")),
             "wear_limit": limit,
             "temp_channel": temp_src[0] if temp_src else None,
             "temp_kind": kind,

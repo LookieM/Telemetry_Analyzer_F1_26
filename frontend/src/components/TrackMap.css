@@ -1,0 +1,79 @@
+.tm-root {
+  width: 100%;
+  color: var(--text);
+}
+.tm-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 2px 0 4px;
+}
+.tm-wrap {
+  position: relative;
+  width: 100%;
+}
+.tm-wrap canvas {
+  display: block;
+  cursor: crosshair;
+}
+.tm-panel {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  max-width: 52%;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  pointer-events: none;
+}
+.tm-head {
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.tm-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.tm-panel table {
+  border-collapse: collapse;
+}
+.tm-panel th {
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: right;
+  padding: 0 0 1px 8px;
+}
+.tm-panel td {
+  padding: 0 0 0 8px;
+  white-space: nowrap;
+}
+.tm-panel td:first-child {
+  padding-left: 0;
+  color: var(--text-dim);
+}
+.tm-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tm-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  width: 170px;
+  font-size: 10px;
+  pointer-events: none;
+}
+.tm-bar {
+  height: 6px;
+  border-radius: 3px;
+}
+.tm-bar-labels {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-dim);
+  margin-top: 1px;
+}

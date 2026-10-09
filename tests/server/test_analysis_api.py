@@ -85,6 +85,16 @@ def test_map_payload(client, race_id, laps):
     assert client.get(f"/api/sessions/{race_id}/map", params={"lap": 9999}).status_code == 404
 
 
+def test_map_reference_session(client, race_id, laps):
+    push = _clean_laps(laps)
+    base = {"lap": push[0], "ref_lap": push[1], "color": "delta"}
+    own = client.get(f"/api/sessions/{race_id}/map", params=base).json()
+    explicit = client.get(f"/api/sessions/{race_id}/map", params={**base, "ref_session": race_id}).json()
+    assert own["ref_session"] == explicit["ref_session"] == race_id
+    assert explicit["channels"][-1]["values"] == own["channels"][-1]["values"]
+    assert client.get(f"/api/sessions/{race_id}/map", params={**base, "ref_session": 999999}).status_code == 404
+
+
 def test_channel_inventory(client, race_id):
     rows = client.get(f"/api/sessions/{race_id}/channels/inventory").json()
     assert rows and {"Group", "Channel", "Unit", "Columns"} <= set(rows[0])

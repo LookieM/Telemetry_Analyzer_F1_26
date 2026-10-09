@@ -21,6 +21,7 @@ def test_session_tyres(client, race_id):
     assert body["allocation"]["19"]["label"] and body["allocation"]["19"]["color"].startswith("#")
     assert body["temp_channel"] and body["race_stats"]["fuel_s_per_kg"] > 0
     assert 30 <= body["wear_limit"] <= 95
+    assert body["state"] == "dry"
     custom = client.get(f"/api/sessions/{race_id}/tyres", params={"wear_limit": 50}).json()
     assert custom["wear_limit"] == 50
     assert client.get("/api/sessions/999999/tyres").status_code == 404
