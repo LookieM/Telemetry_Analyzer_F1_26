@@ -1,0 +1,118 @@
+/* Live view: designed for a 1080x1920 portrait monitor; sizes scale with the viewport (also at 125% Windows scaling). */
+.live {
+  --u: clamp(10px, min(1.85vw, 1.04vh), 30px);
+  font-size: var(--u);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  padding: 0.7em 0.9em;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+.live .dim { color: var(--text-dim); }
+.live .bad { color: var(--bad); }
+.live code { font-family: var(--font-mono); font-size: 0.9em; }
+.lv-card { background: var(--panel); border: 1px solid var(--border); border-radius: 0.5em; padding: 0.6em 0.8em; min-height: 0; }
+.lv-card h3 { font-size: 0.75em; margin-bottom: 0.4em; display: flex; gap: 0.5em; align-items: center; }
+.k { display: block; font-size: 0.7em; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+.tag { display: inline-block; margin-left: 0.4em; padding: 0 0.4em; border-radius: 0.3em; font-size: 0.7em; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+.tag.bad { border-color: var(--bad); color: var(--bad); }
+.tag.good { border-color: var(--good); color: var(--good); }
+.chip { display: inline-block; width: 0.8em; height: 0.8em; border-radius: 50%; margin-right: 0.35em; vertical-align: -0.05em; }
+.chip.big { width: 1.4em; height: 1.4em; }
+
+/* session bar */
+.lv-bar-top { display: flex; align-items: center; gap: 0.9em; font-size: 1.1em; white-space: nowrap; }
+.lv-back { color: var(--text-dim); font-size: 1.3em; }
+.lv-track { font-size: 1.4em; }
+.lv-lap b, .lv-pos b { font-size: 1.3em; }
+.lv-spacer { flex: 1; }
+.lv-flag { padding: 0.05em 0.6em; border-radius: 0.3em; font-weight: 700; background: var(--panel-2); border: 1px solid var(--border); }
+.lv-flag.sc { background: var(--warn); color: #111; border-color: var(--warn); }
+.lv-flag.pit { background: var(--info); color: #fff; border-color: var(--info); }
+.lv-flag.bad { background: var(--bad); color: #fff; border-color: var(--bad); }
+.lv-flag.warn { border-color: var(--warn); color: var(--warn); }
+.lv-conn { font-size: 1.2em; }
+.lv-conn.on { color: var(--good); }
+.lv-conn.off { color: var(--bad); }
+.lv-conn-banner { background: var(--warn); color: #111; text-align: center; padding: 0.3em; border-radius: 0.4em; font-weight: 700; }
+.lv-wait { margin: auto; text-align: center; max-width: 30em; }
+.lv-wait h1 { font-size: 2em; margin-bottom: 0.6em; }
+
+/* timing */
+.lv-timing { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0.8em; align-items: stretch; }
+.lv-delta { display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 0.6em; border: 2px solid var(--border); background: var(--panel); padding: 0.3em 0; }
+.lv-delta.fast { border-color: var(--good); }
+.lv-delta.slow { border-color: var(--bad); }
+.lv-delta-val { font-size: 6.2em; line-height: 1; font-weight: 700; font-family: var(--font-mono); }
+.lv-delta.fast .lv-delta-val { color: var(--good); }
+.lv-delta.slow .lv-delta-val { color: var(--bad); }
+.lv-delta-ref { color: var(--text-dim); font-size: 0.95em; }
+.lv-times { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em 0.8em; align-content: center; }
+.lv-times b { font-size: 1.7em; font-family: var(--font-mono); font-weight: 600; }
+.lv-sectors { grid-column: 1 / -1; display: flex; gap: 1.2em; font-family: var(--font-mono); color: var(--text-dim); }
+.lv-sectors .cur { color: var(--text); font-weight: 700; }
+
+/* delta trace */
+.lv-tracecard { padding: 0.3em; flex: 0 0 12em; }
+.lv-trace { width: 100%; height: 100%; display: block; }
+.lv-trace.lv-empty { display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
+.lv-trace-slow { fill: rgba(215, 38, 61, 0.08); }
+.lv-trace-fast { fill: rgba(46, 158, 68, 0.08); }
+.lv-trace-zero { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 6 6; }
+.lv-trace-line { fill: none; stroke: var(--warn); stroke-width: 3; }
+.lv-trace-dot { fill: var(--warn); }
+.lv-trace-lbl { fill: var(--text-dim); font-size: 16px; }
+
+/* tyres */
+.lv-tyre-head { display: flex; align-items: center; gap: 0.6em; font-size: 1.2em; margin-bottom: 0.4em; }
+.lv-wheels { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7em; }
+.lv-wheel { background: var(--panel); border: 2px solid var(--border); border-radius: 0.5em; padding: 0.8em 0.9em; }
+.lv-wheel.st-cold { border-color: var(--info); }
+.lv-wheel.st-hot { border-color: var(--bad); }
+.lv-wheel.st-ok { border-color: var(--good); }
+.lv-wheel-head { display: flex; justify-content: space-between; font-size: 1em; }
+.lv-wheel-temps { display: flex; align-items: baseline; gap: 0.8em; margin: 0.15em 0 0.35em; }
+.lv-wheel-temps .t { font-size: 3em; font-weight: 700; font-family: var(--font-mono); line-height: 1.1; }
+.lv-wheel-temps .t.sm { font-size: 1.3em; font-weight: 500; }
+.t-cold { color: var(--info); }
+.t-hot { color: var(--bad); }
+.t-ok { color: var(--good); }
+.lv-blister { color: var(--bad); font-size: 0.8em; margin-top: 0.2em; }
+
+/* bars */
+.lv-bar { position: relative; height: 1.5em; background: var(--panel-2); border-radius: 0.3em; overflow: hidden; }
+.lv-bar-fill { height: 100%; transition: width 0.2s linear; }
+.lv-bar-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: 0.7; }
+.lv-bar-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85em; text-shadow: 0 0 3px #000; color: #fff; }
+.lv-energy { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6em; }
+.lv-kv { display: flex; justify-content: space-between; margin-top: 0.4em; font-size: 0.85em; color: var(--text-dim); }
+.lv-kv b { color: var(--text); font-family: var(--font-mono); }
+
+/* strategy */
+.lv-strategy { display: grid; grid-template-columns: auto 1fr; gap: 1em; align-items: center; border-width: 2px; }
+.lv-strategy.lv-muted { display: block; color: var(--text-dim); }
+.lv-strategy.call-box { border-color: var(--bad); background: rgba(215, 38, 61, 0.14); }
+.lv-strategy.call-stay { border-color: var(--good); }
+.lv-call { display: flex; flex-direction: column; align-items: center; min-width: 5.5em; }
+.lv-call-word { font-size: 3.4em; font-weight: 800; line-height: 1; letter-spacing: 0.04em; }
+.call-box .lv-call-word { color: var(--bad); }
+.call-stay .lv-call-word { color: var(--good); }
+.lv-call-sub { font-size: 0.8em; color: var(--text-dim); }
+.lv-strat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4em 1em; }
+.lv-strat-grid b { font-size: 1.15em; font-family: var(--font-mono); }
+
+/* rivals */
+.lv-rivalcard { flex: 1 1 10em; overflow: hidden; padding: 0.3em 0.5em; }
+.lv-rivals { width: 100%; border-collapse: collapse; font-size: 1.2em; }
+.lv-rivals th { text-align: left; color: var(--text-dim); font-size: 0.7em; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.2em 0.4em; }
+.lv-rivals td { padding: 0.45em 0.4em; border-top: 1px solid var(--border); white-space: nowrap; }
+.lv-rivals tr.you td { background: rgba(224, 60, 49, 0.18); font-weight: 700; }
+.lv-rivals tr.threat td { box-shadow: inset 3px 0 0 var(--bad); }
+
+.lv-events { display: flex; gap: 0.8em; flex-wrap: nowrap; overflow: hidden; font-size: 0.85em; white-space: nowrap; }
+.lv-events .ev { padding: 0.1em 0.6em; border-radius: 0.3em; background: var(--panel-2); border: 1px solid var(--border); }
+.lv-events .ev-box { border-color: var(--bad); color: var(--bad); }
+.lv-events .ev-sc, .lv-events .ev-penalty { border-color: var(--warn); color: var(--warn); }

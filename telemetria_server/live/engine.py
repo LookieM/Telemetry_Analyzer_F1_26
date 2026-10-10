@@ -122,8 +122,9 @@ class LiveEngine:
             lap = lap.sort_values("lap_distance").drop_duplicates("lap_distance")
             if len(lap) < 50:
                 return
-            self.pb_ref = RefLap(lap["lap_distance"].to_numpy(float), lap["lap_time"].to_numpy(float),
-                                 float(row["best_lap_time"]), "PB")
+            t = lap["lap_time"].to_numpy(float)
+            t = t - t[0]  # laps that start from the grid carry the pre-start time; the delta must start at 0
+            self.pb_ref = RefLap(lap["lap_distance"].to_numpy(float), t, float(t[-1]), "PB")
         except Exception:
             log.exception("could not load the personal-best reference lap")
 
@@ -210,7 +211,8 @@ class LiveEngine:
         last_ms = int(me["m_lastLapTimeInMS"])
         d, t = np.array(self._cur_d), np.array(self._cur_t)
         if (last_ms > 20000 and len(d) > 100 and self._track_len
-                and d.min() < 0.05 * self._track_len and d.max() > 0.95 * self._track_len):
+                and d.min() < 0.05 * self._track_len and d.max() > 0.95 * self._track_len
+                and (t > 0.5).mean() > 0.95):  # the lap timer actually ran all lap
             d2, t2 = d.copy(), t.copy()
             t2[-1] = max(t2[-1], last_ms / 1000.0)
             valid = self._lap_valid(prev)
@@ -349,7 +351,7 @@ class LiveEngine:
             "active_aero": int(c2["m_activeAeroMode"]) if c2 is not None else None,
         }
 
-    def _rivals(self, lapd, sess, span: int = 3) -> list[dict]:
+    def _rivals(self, lapd, sess, span: int = 5) -> list[dict]:
         stat = self.s.get(PID_STATUS)
         part = self.s.get(PID_PARTICIPANTS)
         cars = []

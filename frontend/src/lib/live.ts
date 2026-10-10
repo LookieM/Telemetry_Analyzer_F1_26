@@ -1,0 +1,172 @@
+/** Live view: message types, delta trace buffer and the WebSocket hook. */
+import { useEffect, useRef, useState } from "react"
+
+export type WheelStatus = "cold" | "ok" | "hot"
+export interface LiveWheel {
+  surface: number
+  inner: number
+  press_psi: number
+  wear: number | null
+  damage: number | null
+  blister: number | null
+  brake_temp: number
+  status: WheelStatus
+  inner_status: WheelStatus
+  wear_status: "ok" | "high" | "limit"
+}
+export interface LiveRival {
+  pos: number
+  name: string
+  you: boolean
+  gap_s: number | null
+  compound: number | null
+  label: string | null
+  age: number | null
+  stops: number
+  last: number | null
+  in_pit: boolean
+  threat: boolean
+}
+export interface LiveStrategy {
+  available: boolean
+  reason?: string
+  call?: "BOX" | "STAY"
+  call_green?: "BOX" | "STAY"
+  call_sc?: "BOX" | "STAY"
+  box_window?: [number, number] | null
+  best_in_laps?: number
+  fit_label?: string | null
+  box_now_s?: number | null
+  stay_out_s?: number | null
+  box_under_sc_s?: number | null
+  laps_left?: number
+  updated_lap?: number
+  sc?: number
+}
+export interface LiveSnapshot {
+  type: "snapshot"
+  t: number
+  session: {
+    track: string
+    type: string
+    lap: number
+    total_laps: number
+    position: number
+    weather: string
+    track_temp: number
+    air_temp: number
+    sc: number
+    sc_name: string
+    forecast: { in_min: number; weather: string; rain_pct: number }[]
+    game_pit_window: [number, number] | null
+    pit_status: number
+    penalties_s: number
+  }
+  timing: {
+    lap_time: number
+    last: number | null
+    best: number | null
+    sectors: (number | null)[]
+    sector: number
+    delta: number | null
+    predicted: number | null
+    ref: string | null
+    ref_time: number | null
+    lap_distance: number
+    invalid: boolean
+  }
+  tyres: {
+    compound: number
+    label: string
+    age: number
+    wear_limit: number
+    wheels: Record<"FL" | "FR" | "RL" | "RR", LiveWheel>
+    targets: { surface: [number, number]; inner: [number, number] }
+  }
+  fuel: { kg: number; capacity: number; per_lap: number | null; laps_left: number | null; margin_laps: number | null; game_laps_left: number }
+  ers: { store_mj: number; mode: number; deployed_mj: number; harvested_mj: number; harvest_limit_mj: number; overtake: boolean | null; overtake_available: boolean | null; active_aero: number | null }
+  rivals: LiveRival[]
+  strategy: LiveStrategy | null
+}
+export interface LiveStatus {
+  type: "status"
+  connected: boolean
+  enabled?: boolean
+  packets_per_s?: number
+  frame_gap_pct?: number
+  recording?: boolean
+}
+export interface LiveEvent {
+  type: "event"
+  kind: string
+  text: string
+  t: number
+}
+
+export const ERS_MODES = ["None", "Medium", "Hotlap", "Overtake"]
+const COMPOUND_COLORS: Record<number, string> = { 22: "#B5179E", 16: "#D7263D", 17: "#E8A317", 18: "#C9CED6", 19: "#8A9099", 20: "#5C6670", 21: "#3A4148", 7: "#2E9E44", 8: "#1F6FD1" }
+export const compoundColor = (code: number | null | undefined) => (code != null ? COMPOUND_COLORS[code] ?? "#8A9099" : "#8A9099")
+
+/** Delta-vs-distance points of the current lap; resets when the lap distance wraps. */
+export function pushDelta(points: [number, number][], dist: number, delta: number | null, maxPoints = 1500): [number, number][] {
+  if (delta == null || !Number.isFinite(delta)) return points
+  const last = points[points.length - 1]
+  const next = last && dist < last[0] - 200 ? [] : points.slice()
+  if (next.length && dist <= next[next.length - 1][0]) return next
+  next.push([dist, delta])
+  return next.length > maxPoints ? next.slice(next.length - maxPoints) : next
+}
+
+/** Signed gap to a rival: negative = ahead. */
+export function gapLabel(gap: number | null): string {
+  if (gap == null || !Number.isFinite(gap)) return "—"
+  if (Math.abs(gap) < 0.05) return "0.0"
+  return `${gap > 0 ? "+" : "−"}${Math.abs(gap).toFixed(1)}`
+}
+
+export interface LiveData {
+  snapshot: LiveSnapshot | null
+  status: LiveStatus | null
+  events: LiveEvent[]
+  deltaTrace: [number, number][]
+  socket: "connecting" | "open" | "closed"
+  lastAt: number
+}
+
+export function useLive(): LiveData {
+  const [data, setData] = useState<LiveData>({ snapshot: null, status: null, events: [], deltaTrace: [], socket: "connecting", lastAt: 0 })
+  const trace = useRef<[number, number][]>([])
+  useEffect(() => {
+    let ws: WebSocket | null = null
+    let timer: number | undefined
+    let stopped = false
+    const connect = () => {
+      const proto = location.protocol === "https:" ? "wss" : "ws"
+      ws = new WebSocket(`${proto}://${location.host}/ws/live`)
+      ws.onopen = () => setData((d) => ({ ...d, socket: "open" }))
+      ws.onclose = () => {
+        setData((d) => ({ ...d, socket: "closed" }))
+        if (!stopped) timer = window.setTimeout(connect, 1500)
+      }
+      ws.onmessage = (ev) => {
+        const m = JSON.parse(ev.data)
+        if (m.type === "snapshot") {
+          const s = m as LiveSnapshot
+          trace.current = pushDelta(trace.current, s.timing.lap_distance, s.timing.delta)
+          setData((d) => ({ ...d, snapshot: s, deltaTrace: trace.current, lastAt: Date.now() }))
+        } else if (m.type === "status") {
+          setData((d) => ({ ...d, status: m as LiveStatus }))
+        } else if (m.type === "event") {
+          setData((d) => ({ ...d, events: [m as LiveEvent, ...d.events].slice(0, 6) }))
+        }
+      }
+    }
+    connect()
+    return () => {
+      stopped = true
+      window.clearTimeout(timer)
+      ws?.close()
+    }
+  }, [])
+  return data
+}
