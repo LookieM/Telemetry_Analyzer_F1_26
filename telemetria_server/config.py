@@ -14,6 +14,7 @@ class Config:
     host: str = "127.0.0.1"
     port: int = 8765
     udp_port: int = 20777
+    record: bool = True  # listen on udp_port and record sessions into the library
     forward_to: str = ""  # "host:port" to relay raw UDP packets (e.g. to SRT); empty = off
     access_token: str = ""  # empty = open; otherwise required for /api and /ws
     live_rate_hz: int = 10

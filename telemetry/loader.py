@@ -156,6 +156,11 @@ def load_telemetry(filepath: str | Path) -> pd.DataFrame:
     except Exception:
         df = pd.read_csv(path, sep="\t", on_bad_lines="skip", low_memory=False)
 
+    return normalize_frame(df)
+
+
+def normalize_frame(df: pd.DataFrame) -> pd.DataFrame:
+    """Alias columns, derive speed / helper channels, int lap. Shared by CSV load and live recording."""
     if df.empty:
         return df
 

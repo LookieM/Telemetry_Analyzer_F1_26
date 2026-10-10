@@ -22,7 +22,7 @@ def _dist(tmp_path: Path) -> Path:
 
 
 def test_spa_fallback(tmp_path):
-    with TestClient(create_app(Config(app_root=tmp_path), frontend_dist=_dist(tmp_path))) as c:
+    with TestClient(create_app(Config(record=False, app_root=tmp_path), frontend_dist=_dist(tmp_path))) as c:
         assert c.get("/").text == "<html>SPA</html>"
         for deep in ("/session/25/tyres", "/planner", "/session/3"):
             r = c.get(deep)

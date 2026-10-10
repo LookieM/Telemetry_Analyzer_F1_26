@@ -36,11 +36,11 @@ def race_id(lib_root: Path) -> int:
 
 @pytest.fixture
 def client(lib_root: Path):
-    with TestClient(create_app(Config(app_root=lib_root), frontend_dist=lib_root / "no_dist")) as c:
+    with TestClient(create_app(Config(record=False, app_root=lib_root), frontend_dist=lib_root / "no_dist")) as c:
         yield c
 
 
 @pytest.fixture
 def empty_client(tmp_path: Path):
-    with TestClient(create_app(Config(app_root=tmp_path), frontend_dist=tmp_path / "no_dist")) as c:
+    with TestClient(create_app(Config(record=False, app_root=tmp_path), frontend_dist=tmp_path / "no_dist")) as c:
         yield c

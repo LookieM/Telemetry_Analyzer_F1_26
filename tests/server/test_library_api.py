@@ -90,7 +90,7 @@ def test_warm_latency(client, race_id):
 
 
 def test_token_middleware(tmp_path):
-    app = create_app(Config(app_root=tmp_path, access_token="s3cret"), frontend_dist=tmp_path / "none")
+    app = create_app(Config(record=False, app_root=tmp_path, access_token="s3cret"), frontend_dist=tmp_path / "none")
     with TestClient(app) as c:
         assert c.get("/api/health").status_code == 401
         assert c.get("/api/health", params={"token": "bad"}).status_code == 401
@@ -106,12 +106,12 @@ def test_open_by_default(empty_client):
 
 
 def test_static_mount_only_with_dist(tmp_path):
-    with TestClient(create_app(Config(app_root=tmp_path), frontend_dist=tmp_path / "missing")) as c:
+    with TestClient(create_app(Config(record=False, app_root=tmp_path), frontend_dist=tmp_path / "missing")) as c:
         assert c.get("/").status_code == 404
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<html>hi</html>", encoding="utf-8")
-    with TestClient(create_app(Config(app_root=tmp_path), frontend_dist=dist)) as c:
+    with TestClient(create_app(Config(record=False, app_root=tmp_path), frontend_dist=dist)) as c:
         assert "hi" in c.get("/").text
         assert c.get("/api/health").status_code == 200  # API routes win over the static mount
 

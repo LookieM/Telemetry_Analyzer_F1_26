@@ -16,6 +16,7 @@ from telemetry.progress import ensure_progress_schema
 
 from .api import imports, laps, library, settings, strategy, tyres
 from .config import REPO_ROOT, Config
+from .ingest import UdpIngest
 
 COOKIE = "telemetria_token"
 
@@ -46,7 +47,16 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
         init_db(cfg.app_root)
         ensure_session_meta_schema(cfg.app_root)
         ensure_progress_schema(cfg.app_root)
-        yield
+        ingest = None
+        if cfg.record:
+            ingest = UdpIngest(cfg)
+            await ingest.start()
+        app.state.ingest = ingest
+        try:
+            yield
+        finally:
+            if ingest is not None:
+                await ingest.stop()
 
     app = FastAPI(title="Telemetria", lifespan=lifespan)
     app.state.config = cfg
