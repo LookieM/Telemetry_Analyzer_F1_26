@@ -3,7 +3,9 @@
 host = "127.0.0.1"      # "0.0.0.0" exposes the server to the home network (set access_token then)
 port = 8765             # HTTP / WebSocket port
 udp_port = 20777        # port the game sends telemetry to
-forward_to = ""         # relay raw UDP packets, e.g. "127.0.0.1:20778" for SRT; empty = off
+forward_to = ""         # relay raw UDP packets to other apps; empty = off
+# The game can send to one port only, so let this server receive it and relay to the rest, e.g.
+# forward_to = ["127.0.0.1:20778", "127.0.0.1:20779"]   # SRT on 20778, SimHub on 20779
 access_token = ""       # empty = open; otherwise pass ?token=... once (it is kept in a cookie)
 live_rate_hz = 10       # live snapshot rate
 # app_root = "C:/path/to/library"   # folder holding data/telemetry.db; default = repo root

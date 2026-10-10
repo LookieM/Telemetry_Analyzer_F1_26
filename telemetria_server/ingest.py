@@ -65,22 +65,23 @@ class SessionManager:
 
 
 class _Protocol(asyncio.DatagramProtocol):
-    def __init__(self, mgr: SessionManager, forward: tuple[str, int] | None, live: LiveState | None = None) -> None:
+    def __init__(self, mgr: SessionManager, forward: list[tuple[str, int]] | None, live: LiveState | None = None) -> None:
         self.mgr = mgr
         self.live = live
-        self.forward = forward
+        self.forward = list(forward or [])
         self.transport: asyncio.DatagramTransport | None = None
-        self.fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if forward else None
+        self.fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if self.forward else None
 
     def connection_made(self, transport) -> None:
         self.transport = transport
 
     def datagram_received(self, data: bytes, addr) -> None:
         if self.fwd_sock is not None:
-            try:
-                self.fwd_sock.sendto(data, self.forward)
-            except OSError:
-                pass
+            for target in self.forward:
+                try:
+                    self.fwd_sock.sendto(data, target)
+                except OSError:
+                    pass  # a closed target app must not stop the others
         now = time.time()
         try:
             if self.live is not None:
@@ -91,8 +92,28 @@ class _Protocol(asyncio.DatagramProtocol):
 
 
 def _hostport(text: str) -> tuple[str, int] | None:
-    host, _, port = text.rpartition(":")
-    return (host, int(port)) if host and port.isdigit() else None
+    host, _, port = text.strip().rpartition(":")
+    return (host.strip(), int(port)) if host.strip() and port.isdigit() else None
+
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0"}
+
+
+def forward_targets(spec: str | list[str], listen_port: int) -> list[tuple[str, int]]:
+    """Parse ``"host:port, host:port"`` (or a list); drops invalid entries and our own port (a relay loop)."""
+    items = spec if isinstance(spec, list) else str(spec or "").split(",")
+    out: list[tuple[str, int]] = []
+    for item in items:
+        if not str(item).strip():
+            continue
+        hp = _hostport(str(item))
+        if hp is None:
+            log.warning("ignoring forward target %r (expected host:port)", item)
+        elif hp[1] == listen_port and hp[0] in LOCAL_HOSTS:
+            log.warning("ignoring forward target %s:%s: that is our own UDP port", *hp)
+        elif hp not in out:
+            out.append(hp)
+    return out
 
 
 class UdpIngest:
@@ -128,12 +149,13 @@ class UdpIngest:
             sock.close()
             log.warning("UDP port %s unavailable (%s); live recording disabled", self.cfg.udp_port, exc)
             return False
-        fwd = _hostport(self.cfg.forward_to) if self.cfg.forward_to else None
+        fwd = forward_targets(self.cfg.forward_to, self.cfg.udp_port)
         self.protocol = _Protocol(self.mgr, fwd, self.live)
         self.transport, _ = await self.loop.create_datagram_endpoint(lambda: self.protocol, sock=sock)
         self._ticker = asyncio.create_task(self._tick_loop())
         self._live_task = asyncio.create_task(self._live_loop())
-        log.info("listening for F1 UDP on %s:%s", self.cfg.host, self.cfg.udp_port)
+        log.info("listening for F1 UDP on %s:%s%s", self.cfg.host, self.cfg.udp_port,
+                 f", forwarding to {', '.join(f'{h}:{p}' for h, p in fwd)}" if fwd else "")
         return True
 
     async def _tick_loop(self) -> None:

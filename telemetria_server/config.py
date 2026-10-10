@@ -15,7 +15,7 @@ class Config:
     port: int = 8765
     udp_port: int = 20777
     record: bool = True  # listen on udp_port and record sessions into the library
-    forward_to: str = ""  # "host:port" to relay raw UDP packets (e.g. to SRT); empty = off
+    forward_to: str = ""  # "host:port, host:port" (TOML string or list) to relay raw UDP to other apps; empty = off
     access_token: str = ""  # empty = open; otherwise required for /api and /ws
     live_rate_hz: int = 10
     app_root: Path = field(default_factory=lambda: REPO_ROOT)
@@ -31,6 +31,9 @@ def load_config(path: Path | None = None) -> Config:
         raw = tomllib.load(f)
     for fld in fields(Config):
         if fld.name in raw:
+            value = raw[fld.name]
+            if fld.name == "forward_to" and isinstance(value, list):
+                value = ", ".join(str(v) for v in value)  # TOML list of "host:port"
             kind = Path if fld.name == "app_root" else type(getattr(cfg, fld.name))
-            setattr(cfg, fld.name, kind(raw[fld.name]))
+            setattr(cfg, fld.name, kind(value))
     return cfg
