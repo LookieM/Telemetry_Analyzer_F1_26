@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .config import Config
-from .udp.recorder import SESSION_IDLE_S, SessionRecorder
+from .udp.recorder import SESSION_IDLE_S, SessionRecorder, recover_checkpoints
 
 log = logging.getLogger("telemetria.ingest")
 EVENT_SEND = b"SEND"
@@ -22,9 +22,10 @@ class SessionManager:
     recorders are returned/handed to ``on_finish`` (which ingests them off the event loop).
     """
 
-    def __init__(self, on_finish=None, idle_s: float = SESSION_IDLE_S) -> None:
+    def __init__(self, on_finish=None, idle_s: float = SESSION_IDLE_S, on_lap=None) -> None:
         self.rec = SessionRecorder()
         self.on_finish = on_finish
+        self.on_lap = on_lap  # called with (recorder, snapshot) when a new lap starts
         self.idle_s = idle_s
         self.finished: list[SessionRecorder] = []
         self.packets = 0
@@ -32,6 +33,7 @@ class SessionManager:
 
     def _finish(self) -> None:
         rec, self.rec = self.rec, SessionRecorder()
+        self.last_lap_seen = None
         if rec.has_data:
             self.finished.append(rec)
             if self.on_finish:
@@ -42,6 +44,11 @@ class SessionManager:
         if self.rec.is_new_session(data):
             self._finish()
         self.rec.feed(data, t)
+        cur = self.rec._cur_lap
+        if cur != self.last_lap_seen:
+            if self.on_lap and self.last_lap_seen is not None and cur is not None and cur > self.last_lap_seen:
+                self.on_lap(self.rec, self.rec.snapshot())
+            self.last_lap_seen = cur
         if len(data) == 45 and data[29:33] == EVENT_SEND:
             self._finish()
 
@@ -87,15 +94,22 @@ class UdpIngest:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.mgr = SessionManager(self._queue_ingest)
+        self.mgr = SessionManager(self._queue_ingest, on_lap=self._queue_checkpoint)
+        self.live_dir = cfg.app_root / "data" / "live"
         self.transport = None
         self.protocol: _Protocol | None = None
         self.results: list = []
         self._tasks: set[asyncio.Task] = set()
         self._ticker: asyncio.Task | None = None
+        self._checkpointing = False
 
     async def start(self) -> bool:
         self.loop = asyncio.get_running_loop()
+        try:
+            for res in await asyncio.to_thread(recover_checkpoints, self.live_dir, self.cfg.app_root):
+                log.info("recovered an interrupted session: %s", res.message)
+        except Exception:
+            log.exception("checkpoint recovery failed")
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
@@ -122,9 +136,27 @@ class UdpIngest:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
+    def _queue_checkpoint(self, rec: SessionRecorder, snap: dict) -> None:
+        assert self.loop is not None
+        if self._checkpointing:
+            return  # a previous write is still running; the next lap will catch up
+        self._checkpointing = True
+        task = self.loop.create_task(self._checkpoint(rec, snap))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _checkpoint(self, rec: SessionRecorder, snap: dict) -> None:
+        try:
+            await asyncio.to_thread(rec.checkpoint, self.live_dir, snap)
+        except Exception:
+            log.exception("checkpoint write failed")
+        finally:
+            self._checkpointing = False
+
     async def _ingest(self, rec: SessionRecorder) -> None:
         try:
             res = await asyncio.to_thread(rec.ingest, self.cfg.app_root)
+            await asyncio.to_thread(rec.discard_checkpoint, self.live_dir)
             self.results.append(res)
             log.info("recorded session: %s", res.message)
         except Exception:

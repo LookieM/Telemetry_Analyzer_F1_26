@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -131,11 +132,16 @@ class SessionRecorder:
     def has_data(self) -> bool:
         return any(len(v) > 30 for v in self._laps.values())
 
-    def build_frame(self) -> pd.DataFrame:
+    def snapshot(self) -> dict[int, dict[int, dict]]:
+        """Cheap copy of the recorded bins, safe to hand to a worker thread while feeding continues."""
+        return {lap: dict(bins) for lap, bins in self._laps.items()}
+
+    def build_frame(self, laps: dict[int, dict[int, dict]] | None = None) -> pd.DataFrame:
         """SRT-style frame: per lap, 1 m bins from first to last observed bin, gaps interpolated."""
+        laps = self._laps if laps is None else laps
         parts = []
-        for lap in sorted(self._laps):
-            bins = self._laps[lap]
+        for lap in sorted(laps):
+            bins = laps[lap]
             if len(bins) < 10:
                 continue
             df = pd.DataFrame.from_dict(bins, orient="index").sort_index()
@@ -157,6 +163,24 @@ class SessionRecorder:
             lapIndex=out["lap_number"].astype(int), lapFlag=0, lap_time_invalid=0,
         )
 
+    def checkpoint(self, live_dir: Path, laps: dict[int, dict[int, dict]] | None = None) -> Path | None:
+        """Write the frame so far (plus a JSON sidecar) to ``live_dir``; survives a crash mid-session."""
+        df = self.build_frame(laps)
+        if df.empty:
+            return None
+        live_dir.mkdir(parents=True, exist_ok=True)
+        base = live_dir / f"{self.session_uid}"
+        tmp = base.with_suffix(".parquet.tmp")
+        df.to_parquet(tmp, index=False)
+        meta = {"hash": self.source_hash(), "session_type": self.session_type, "name": time.strftime("live-%Y%m%d-%H%M%S")}
+        base.with_suffix(".json").write_text(json.dumps(meta), encoding="utf-8")
+        tmp.replace(base.with_suffix(".parquet"))
+        return base.with_suffix(".parquet")
+
+    def discard_checkpoint(self, live_dir: Path) -> None:
+        for ext in (".parquet", ".json", ".parquet.tmp"):
+            (live_dir / f"{self.session_uid}{ext}").unlink(missing_ok=True)
+
     def source_hash(self) -> str:
         return hashlib.sha256(f"udp:{self.session_uid}:{self.track_id}".encode()).hexdigest()
 
@@ -174,3 +198,27 @@ class SessionRecorder:
             app_root=app_root,
             session_type=cols.session_type_name(self.session_type),
         )
+
+
+def recover_checkpoints(live_dir: Path, app_root: Path | None = None) -> list:
+    """Ingest sessions left in ``live_dir`` by a crashed run, then delete them. Returns the ImportResults."""
+    from telemetry.import_session import ingest_dataframe
+    from telemetry.loader import normalize_frame
+
+    results = []
+    for pq in sorted(live_dir.glob("*.parquet")) if live_dir.is_dir() else []:
+        side = pq.with_suffix(".json")
+        try:
+            meta = json.loads(side.read_text(encoding="utf-8"))
+            df = normalize_frame(pd.read_parquet(pq))
+            results.append(ingest_dataframe(
+                df, source_name=meta["name"] + "-recovered", source_hash=meta["hash"], original_size=0,
+                app_root=app_root, session_type=cols.session_type_name(meta.get("session_type", 0)),
+            ))
+        except Exception:
+            continue  # keep the file for a later attempt / manual inspection
+        pq.unlink(missing_ok=True)
+        side.unlink(missing_ok=True)
+    for tmp in live_dir.glob("*.tmp") if live_dir.is_dir() else []:
+        tmp.unlink(missing_ok=True)
+    return results

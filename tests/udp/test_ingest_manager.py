@@ -48,3 +48,25 @@ def test_udp_socket_roundtrip(tmp_path):
         return n
 
     assert asyncio.run(run()) > 1500
+
+
+def test_checkpoint_written_each_lap_and_recovered(tmp_path):
+    from telemetria_server.udp.recorder import recover_checkpoints
+
+    live = tmp_path / "data" / "live"
+    seen = []
+
+    def on_lap(rec, snap):
+        rec.checkpoint(live, snap)
+        seen.append(max(snap))
+
+    mgr = SessionManager(on_lap=on_lap)
+    for i, (t, d) in enumerate(iter_capture(CAP)):
+        if i > 300_000:
+            break
+        mgr.feed(d, t)
+    assert seen and (live / f"{mgr.rec.session_uid}.parquet").exists()
+    # simulate a crash: nothing finished, recovery must ingest the checkpoint and clean up
+    res = recover_checkpoints(live, tmp_path)
+    assert len(res) == 1 and res[0].lap_count >= 1 and res[0].track == "Spa"
+    assert not list(live.glob("*"))
