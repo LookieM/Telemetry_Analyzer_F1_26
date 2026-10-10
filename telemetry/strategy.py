@@ -517,6 +517,78 @@ def _diff(a: float, b: float) -> float | None:
     return round(a - b, 2)
 
 
+def plan_from_state(
+    specs: list[CompoundSpec],
+    params: RaceParams,
+    *,
+    lap: int,
+    compound: int,
+    age: int,
+    used: frozenset[int] | set[int] | tuple[int, ...],
+) -> dict[str, Any] | None:
+    """
+    Live decision from the current race state (`lap` laps completed, `age` laps on `compound`,
+    `used` = dry compounds run so far incl. this one).
+
+    Returns the cost (time over the cheapest continuation, seconds) of boxing now vs staying out,
+    under green and under a safety car, the lap window in which boxing stays within
+    `window_tolerance_s` of the best, and the compound to fit. None once the race is over or the
+    current compound is not in the model.
+    """
+    costs = _Costs(specs, params)
+    remaining = params.laps - int(lap)
+    if remaining <= 0 or compound not in costs.specs:
+        return None
+    used_set = frozenset(used) | {compound}
+    G, _ = _cost_to_go(costs)
+    if used_set not in G:
+        return None
+    raw, pit = costs.raw[compound], params.pit_loss_s
+    age = max(0, min(int(age), len(raw) - 1))
+    max_more = max(0, min(remaining, costs.max_laps[compound] - age))
+    stays_to_flag = costs.valid(used_set)
+
+    def option(k: int, pit_s: float) -> float:
+        """Run k more laps on these tyres, then box (k == remaining: run to the flag)."""
+        run = float(raw[age + k] - raw[age])
+        rest = remaining - k
+        if rest <= 0:
+            return run if stays_to_flag else INF
+        return run + pit_s + G[used_set][rest]
+
+    green = [option(k, pit) for k in range(0, max_more + 1)]
+    box_now, sc_box = green[0], option(0, pit * params.sc_pit_factor)
+    stay = min(green[1:], default=INF)
+    best = min(green)
+    window = [k for k, v in enumerate(green) if v <= best + params.window_tolerance_s]
+    k_best = int(np.argmin(green))
+    # compound to fit when boxing at the best lap
+    rest = remaining - k_best
+    fit, fit_cost = None, INF
+    if rest > 0:
+        for c in costs.specs:
+            ls = np.arange(1, min(rest, costs.max_laps[c]) + 1)
+            m2 = used_set | {c}
+            tail = np.where(rest - ls > 0, pit + G[m2][np.maximum(rest - ls, 0)], np.where(costs.valid(m2), 0.0, INF))
+            v = float(np.min(costs.capped[c][ls] + tail)) if ls.size else INF
+            if v < fit_cost:
+                fit, fit_cost = c, v
+    return {
+        "lap": int(lap),
+        "laps_left": remaining,
+        "box_now_s": box_now,
+        "stay_out_s": stay,
+        "box_under_sc_s": sc_box,
+        "call_green": "BOX" if box_now <= stay else "STAY",
+        "call_sc": "BOX" if sc_box < stay else "STAY",
+        "best_in_laps": k_best,
+        "box_window": [int(lap) + window[0], int(lap) + window[-1]] if np.isfinite(best) else None,
+        "fit_compound": fit,
+        "fit_label": _short(costs.specs, fit) if fit is not None else None,
+        "can_finish_without_stop": max_more == remaining and bool(np.isfinite(green[-1])),
+    }
+
+
 # --------------------------------------------------------------------------- post-race review
 
 

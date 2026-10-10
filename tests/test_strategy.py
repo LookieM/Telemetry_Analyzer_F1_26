@@ -107,3 +107,21 @@ def test_review_counts_laps_the_export_skipped():
     review = review_race(summary, specs_from_model(model), default_params(model, "Zandvoort"))
     assert review is not None and review.missing_laps == [11, 12] and review.actual_time is None
     assert review.execution_s is not None
+
+
+def test_plan_from_state_agrees_with_race_calls_and_window():
+    from telemetry.strategy import plan_from_state
+
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    plan = optimise(specs, params)[0]
+    calls = race_calls(plan, specs, params)
+    stop = plan.stop_laps[0]
+    row = calls[calls["Lap"] == stop].iloc[0]
+    st = plan_from_state(specs, params, lap=stop, compound=plan.compounds[0], age=stop, used={plan.compounds[0]})
+    assert st["box_now_s"] - st["stay_out_s"] == pytest.approx(row["Green: box now vs stay (s)"], abs=0.02)
+    assert st["call_green"] == "BOX"
+    # early in the stint the call is stay out, and the window opens later
+    early = plan_from_state(specs, params, lap=2, compound=plan.compounds[0], age=2, used={plan.compounds[0]})
+    assert early["call_green"] == "STAY" and early["box_window"][0] > 2
+    assert plan_from_state(specs, params, lap=30, compound=plan.compounds[0], age=5, used={plan.compounds[0]}) is None

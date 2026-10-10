@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 
 from .config import Config
+from .serialization import to_jsonable
+from .live.engine import LiveEngine
+from .live.state import LiveState
 from .udp.recorder import SESSION_IDLE_S, SessionRecorder, recover_checkpoints
 
 log = logging.getLogger("telemetria.ingest")
@@ -62,8 +65,9 @@ class SessionManager:
 
 
 class _Protocol(asyncio.DatagramProtocol):
-    def __init__(self, mgr: SessionManager, forward: tuple[str, int] | None) -> None:
+    def __init__(self, mgr: SessionManager, forward: tuple[str, int] | None, live: LiveState | None = None) -> None:
         self.mgr = mgr
+        self.live = live
         self.forward = forward
         self.transport: asyncio.DatagramTransport | None = None
         self.fwd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if forward else None
@@ -77,8 +81,11 @@ class _Protocol(asyncio.DatagramProtocol):
                 self.fwd_sock.sendto(data, self.forward)
             except OSError:
                 pass
+        now = time.time()
         try:
-            self.mgr.feed(data, time.time())
+            if self.live is not None:
+                self.live.feed(data, now)
+            self.mgr.feed(data, now)
         except Exception:  # never let a bad packet kill the socket
             log.exception("ingest failed for one packet")
 
@@ -94,6 +101,9 @@ class UdpIngest:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.live = LiveState()
+        self.engine = LiveEngine(self.live, cfg.app_root)
+        self.clients: set[asyncio.Queue] = set()
         self.mgr = SessionManager(self._queue_ingest, on_lap=self._queue_checkpoint)
         self.live_dir = cfg.app_root / "data" / "live"
         self.transport = None
@@ -119,9 +129,10 @@ class UdpIngest:
             log.warning("UDP port %s unavailable (%s); live recording disabled", self.cfg.udp_port, exc)
             return False
         fwd = _hostport(self.cfg.forward_to) if self.cfg.forward_to else None
-        self.protocol = _Protocol(self.mgr, fwd)
+        self.protocol = _Protocol(self.mgr, fwd, self.live)
         self.transport, _ = await self.loop.create_datagram_endpoint(lambda: self.protocol, sock=sock)
         self._ticker = asyncio.create_task(self._tick_loop())
+        self._live_task = asyncio.create_task(self._live_loop())
         log.info("listening for F1 UDP on %s:%s", self.cfg.host, self.cfg.udp_port)
         return True
 
@@ -129,6 +140,42 @@ class UdpIngest:
         while True:
             await asyncio.sleep(5)
             self.mgr.tick()
+
+    async def _live_loop(self) -> None:
+        """Snapshot at ``live_rate_hz``; events and status go to every websocket client's queue."""
+        period = 1.0 / max(1, self.cfg.live_rate_hz)
+        last_status = 0.0
+        strat_task: asyncio.Task | None = None
+        while True:
+            await asyncio.sleep(period)
+            try:
+                self.engine.tick()
+                if self.engine.strategy_dirty and (strat_task is None or strat_task.done()):
+                    strat_task = asyncio.create_task(asyncio.to_thread(self.engine.update_strategy))
+                msgs = self.engine.pop_events()
+                snap = self.engine.snapshot() if self.clients else None
+                if snap is not None:
+                    msgs.append(snap)
+                now = time.monotonic()
+                if self.clients and now - last_status >= 1.0:
+                    last_status = now
+                    msgs.append(self.status())
+                msgs = [to_jsonable(m) for m in msgs] if self.clients else []
+                for q in list(self.clients):
+                    for m in msgs:
+                        if q.full():
+                            q.get_nowait()  # slow client: drop the oldest instead of growing
+                        q.put_nowait(m)
+            except Exception:
+                log.exception("live loop error")
+
+    def status(self) -> dict:
+        s = self.live
+        return {
+            "type": "status", "connected": bool(s.packets) and time.time() - s.last_t < 3.0,
+            "packets_per_s": round(s.rate, 1), "frame_gap_pct": round(s.gap_pct, 3),
+            "packets": s.packets, "recording": self.mgr.rec.has_data,
+        }
 
     def _queue_ingest(self, rec: SessionRecorder) -> None:
         assert self.loop is not None
@@ -165,6 +212,8 @@ class UdpIngest:
     async def stop(self) -> None:
         if self._ticker:
             self._ticker.cancel()
+        if getattr(self, "_live_task", None):
+            self._live_task.cancel()
         if self.transport:
             self.transport.close()
         if self.protocol and self.protocol.fwd_sock:

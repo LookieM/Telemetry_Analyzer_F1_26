@@ -14,7 +14,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from telemetry.db import ensure_session_meta_schema, init_db
 from telemetry.progress import ensure_progress_schema
 
-from .api import imports, laps, library, settings, strategy, tyres
+from .api import imports, laps, library, live, settings, strategy, tyres
 from .config import REPO_ROOT, Config
 from .ingest import UdpIngest
 
@@ -78,6 +78,7 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
 
     for module in (library, laps, tyres, strategy, settings, imports):
         app.include_router(module.router, prefix="/api")
+    app.include_router(live.router)
 
     if dist.is_dir():
         app.mount("/", SPAStaticFiles(directory=dist, html=True), name="frontend")
