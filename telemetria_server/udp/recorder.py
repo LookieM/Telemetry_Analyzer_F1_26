@@ -26,7 +26,10 @@ class SessionRecorder:
     """Feed raw datagrams with :meth:`feed`; call :meth:`build_frame` or :meth:`ingest` at the end.
 
     Samples are taken on every CarTelemetry packet and combined with the latest packet of every other
-    type; the last sample in each (lap, 1 m bin) wins. A flashback drops the lap being redone.
+    type; the last sample in each (lap, 1 m bin) wins. Like SRT, only samples on a running lap are
+    kept: nothing from the garage or while the lap timer stands at 0 (grid, refuel, pit-lane exit
+    before the line). When the lap timer jumps back (flashback, restart) the bins recorded "in the
+    future" of the new time are dropped, so a rewound lap is redriven instead of mixing two attempts.
     """
 
     def __init__(self) -> None:
@@ -40,6 +43,7 @@ class SessionRecorder:
         self._ctx: dict[str, dict] = {}
         self._laps: dict[int, dict[int, dict]] = {}
         self._cur_lap: int | None = None
+        self._last_t: dict[int, float] = {}
 
     # -- ingest -------------------------------------------------------------------------------
     def is_new_session(self, data: bytes) -> bool:
@@ -78,10 +82,8 @@ class SessionRecorder:
                 "lap_distance": float(lap["m_lapDistance"]),
                 "lap_time_ms": int(lap["m_currentLapTimeInMS"]),
                 "lap_num": int(lap["m_currentLapNum"]),
+                "driver_status": int(lap["m_driverStatus"]),
             }
-        elif pid == 3:
-            if bytes(body["m_eventStringCode"]).decode("ascii", "ignore") == "FLBK":
-                self._flashback = True
         elif pid == 5:
             self._ctx["setup"] = cols.setup_row(body["m_carSetups"][p])
         elif pid == 6:
@@ -97,8 +99,6 @@ class SessionRecorder:
             self._ctx["telemetry2"] = cols.telemetry2_row(body["m_carTelemetryData2"][p])
         return False
 
-    _flashback = False
-
     # -- sampling -----------------------------------------------------------------------------
     def _sample(self) -> bool:
         raw = self._ctx.get("lapraw")
@@ -110,18 +110,23 @@ class SessionRecorder:
             return False
         if self.track_length and dist > self.track_length + 50:
             return False
-        if self._flashback:
-            # the game rewound: whatever we hold for the lap being (re)entered is stale
-            self._flashback = False
-            self._laps.pop(lap, None)
-        elif self._cur_lap is not None and lap < self._cur_lap:
-            self._laps.pop(lap, None)
+        t_lap = raw["lap_time_ms"] / 1000.0
+        if raw.get("driver_status", 1) == 0 or t_lap <= 0.0:
+            return False  # in the garage, or the lap timer is not running
+        if self._cur_lap is not None and lap < self._cur_lap:
+            for later in [n for n in self._laps if n > lap]:
+                self._laps.pop(later)  # rewound into an earlier lap
+        if lap in self._laps and t_lap < self._last_t.get(lap, 0.0) - 0.25:
+            bins = self._laps[lap]
+            for b in [b for b, r in bins.items() if r["lap_time"] > t_lap]:
+                del bins[b]  # rewound within the lap: drop what was recorded after the new time
+        self._last_t[lap] = t_lap
         self._cur_lap = lap
         row: dict[str, float] = {}
         for key in ("session", "setup", "status", "damage", "motion_ex", "telemetry2", "lap", "motion", "telemetry"):
             row.update(self._ctx.get(key, {}))
         row["lap_distance"] = dist
-        row["lap_time"] = raw["lap_time_ms"] / 1000.0
+        row["lap_time"] = t_lap
         row["lap_number"] = lap
         row["lapNum"] = lap
         self._laps.setdefault(lap, {})[int(dist)] = row
@@ -145,9 +150,10 @@ class SessionRecorder:
             if len(bins) < 10:
                 continue
             df = pd.DataFrame.from_dict(bins, orient="index").sort_index()
+            # integer channels (positions, counters, flags, modes) are carried forward, never interpolated
+            is_cat = [c in _CATEGORICAL or "_setup" in c or pd.api.types.is_integer_dtype(df[c]) for c in df.columns]
             full = np.arange(int(df.index.min()), int(df.index.max()) + 1)
             df = df.reindex(full)
-            is_cat = [c in _CATEGORICAL or "_setup" in c for c in df.columns]
             cat = df.loc[:, is_cat].ffill()
             num = df.loc[:, [not x for x in is_cat]].interpolate(limit_area="inside")
             df = pd.concat([num, cat], axis=1).ffill()

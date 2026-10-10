@@ -17,7 +17,7 @@ def test_manager_ends_session_on_idle_and_uid_change():
     mgr = SessionManager(done.append, idle_s=60)
     last = 0.0
     for i, (t, d) in enumerate(iter_capture(CAP)):
-        if i > 40_000:
+        if i > 130_000:  # past the formation lap: the lap timer stands at 0 before the start, nothing is kept
             break
         mgr.feed(d, t)
         last = t

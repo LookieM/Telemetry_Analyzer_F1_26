@@ -1,15 +1,28 @@
 """Map F1 UDP packets (2026 format) to the SRT export columns the analysis expects.
 
-One place for names, units and quirks. Wheel arrays are RL, RR, FL, FR in both UDP and SRT telemetry;
-SRT garage arrays (``*_setup_i``) are front-first (FL, FR, RL, RR), see ``setup_row``.
+One place for names, units and quirks, validated channel by channel against SRT exports of the same
+sessions (gate U3, Miami FP/Q/Race, 2026-10-10):
+
+* Wheel arrays: UDP is RL, RR, FL, FR; SRT is front-first FL, FR, RL, RR for every per-wheel channel
+  (telemetry, damage, motion-ex and garage): ``srt_i = udp[SRT_WHEEL_FROM_UDP[i]]``.
+* World frame: SRT (X, Y, Z) = (-X, Z, Y) of the UDP world frame (position and direction vectors).
+* ``velocity_*`` in SRT is the car's local frame: X forward, Y right, Z down.
+* G-forces: SRT gforce_X = -longitudinal, gforce_Y = lateral, gforce_Z = vertical (UDP int16 / 1000).
+* Angular rates and accelerations: SRT (X, Y, Z) = (-X, Z, Y) of UDP MotionEx.
+* 0-based race / grid positions, speed trap in m/s, clutch 0-1.
 """
 
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 PSI_TO_PA = 6894.757293168
-G_QUANT = 1000.0  # int16 G-forces: ~milli-g (checked against dv/dt and yaw-rate*v on a real capture, +-15%); confirm at gate U3
+G_QUANT = 1000.0  # int16 G-forces are milli-g (fit vs SRT: k = 0.99-1.00)
+# SRT susp_pos = k * UDP + c per axle (empirical fit vs SRT, corr 0.978)
+SUSP_POS_FIT = {"front": (0.00975, 0.0139), "rear": (0.00965, 0.0199)}
+SRT_WHEEL_FROM_UDP = (2, 3, 0, 1)  # SRT index i takes UDP index SRT_WHEEL_FROM_UDP[i]
+WHEELS_SRT = ("FL", "FR", "RL", "RR")
 
 TRACKS: dict[int, str] = {
     0: "Melbourne", 1: "Paul Ricard", 2: "Shanghai", 3: "Bahrain", 4: "Catalunya", 5: "Monaco",
@@ -27,8 +40,6 @@ SESSION_TYPES: dict[int, str] = {
     18: "Test",
 }
 
-WHEEL = ("0", "1", "2", "3")  # RL, RR, FL, FR
-
 
 def track_name(track_id: int) -> str:
     return TRACKS.get(int(track_id), f"Track{int(track_id)}")
@@ -39,7 +50,8 @@ def session_type_name(session_type: int) -> str:
 
 
 def _arr(prefix: str, values, scale: float = 1.0) -> dict[str, float]:
-    return {f"{prefix}_{i}": float(values[i]) * scale for i in range(4)}
+    """UDP wheel array (RL, RR, FL, FR) -> SRT columns ``prefix_0..3`` (FL, FR, RL, RR)."""
+    return {f"{prefix}_{i}": float(values[SRT_WHEEL_FROM_UDP[i]]) * scale for i in range(4)}
 
 
 def setup_row(c) -> dict[str, float]:
@@ -80,11 +92,11 @@ def telemetry_row(c) -> dict[str, float]:
     out = {
         "throttle": float(c["m_throttle"]),
         "brake": float(c["m_brake"]),
-        "clutch": float(c["m_clutch"]),
+        "clutch": float(c["m_clutch"]) / 100.0,
         "steering": float(c["m_steer"]),
         "gear": int(c["m_gear"]),
         "rpm": float(c["m_engineRPM"]),
-        "rpm_perc": float(c["m_revLightsPercent"]) / 100.0,
+        "rev_lights_pct": float(c["m_revLightsPercent"]),
         "drs": int(c["m_drs"]),
         "engine_temp": float(c["m_engineTemperature"]),
     }
@@ -116,11 +128,25 @@ def status_row(c) -> dict[str, float]:
         "ers_harv_limit": float(c["m_ersHarvestLimitPerLap"]),
         "ers_deployed": float(c["m_ersDeployedThisLap"]),
         "flags_status": int(c["m_vehicleFiaFlags"]),
+        "traction_ctrl_setup": int(c["m_tractionControl"]),
+        "abs_setup": int(c["m_antiLockBrakes"]),
     }
     comp = int(c["m_actualTyreCompound"])
     for i in range(4):
         out[f"tyre_compound_{i}"] = comp
     return out
+
+
+DAMAGE_PARTS = (
+    ("m_frontLeftWingDamage", "front_left_wing_damage"), ("m_frontRightWingDamage", "front_right_wing_damage"),
+    ("m_rearWingDamage", "rear_wing_damage"), ("m_floorDamage", "floor_damage"),
+    ("m_diffuserDamage", "diffuser_damage"), ("m_sidepodDamage", "sidepod_damage"),
+    ("m_drsFault", "drs_damage"), ("m_ersFault", "ers_damage"), ("m_gearBoxDamage", "gear_box_damage"),
+    ("m_engineDamage", "engine_damage"), ("m_engineMGUHWear", "mguh_damage"),
+    ("m_engineESWear", "es_damage"), ("m_engineCEWear", "ce_damage"),
+    ("m_engineICEWear", "ice_damage"), ("m_engineMGUKWear", "mguk_damage"),
+    ("m_engineTCWear", "tc_damage"),
+)
 
 
 def damage_row(c) -> dict[str, float]:
@@ -130,14 +156,7 @@ def damage_row(c) -> dict[str, float]:
     out.update(_arr("tyre_damage", c["m_tyresDamage"], 0.01))
     out.update(_arr("tyre_blister", c["m_tyreBlisters"], 0.01))
     out.update(_arr("brake_damage", c["m_brakesDamage"], 0.01))
-    for src, dst in (("m_frontLeftWingDamage", "front_left_wing_damage"), ("m_frontRightWingDamage", "front_right_wing_damage"),
-                     ("m_rearWingDamage", "rear_wing_damage"), ("m_floorDamage", "floor_damage"),
-                     ("m_diffuserDamage", "diffuser_damage"), ("m_sidepodDamage", "sidepod_damage"),
-                     ("m_drsFault", "drs_damage"), ("m_ersFault", "ers_damage"), ("m_gearBoxDamage", "gear_box_damage"),
-                     ("m_engineDamage", "engine_damage"), ("m_engineMGUHWear", "mguh_damage"),
-                     ("m_engineESWear", "es_damage"), ("m_engineCEWear", "ce_damage"),
-                     ("m_engineICEWear", "ice_damage"), ("m_engineMGUKWear", "mguk_damage"),
-                     ("m_engineTCWear", "tc_damage")):
+    for src, dst in DAMAGE_PARTS:
         out[dst] = float(c[src]) * 0.01
     out["engine_blown"] = int(c["m_engineBlown"])
     out["engine_seized"] = int(c["m_engineSeized"])
@@ -150,19 +169,17 @@ def _g(raw) -> float:
 
 
 def motion_row(c) -> dict[str, float]:
-    """CarMotion record -> SRT channels."""
+    """CarMotion record -> SRT channels (world frame remapped, G-forces as SRT axes)."""
     nrm = 32767.0
     return {
-        "world_position_X": float(c["m_worldPositionX"]), "world_position_Y": float(c["m_worldPositionY"]),
-        "world_position_Z": float(c["m_worldPositionZ"]),
-        "velocity_X": float(c["m_worldVelocityX"]), "velocity_Y": float(c["m_worldVelocityY"]),
-        "velocity_Z": float(c["m_worldVelocityZ"]),
-        "world_forward_X": float(c["m_worldForwardDirX"]) / nrm, "world_forward_Y": float(c["m_worldForwardDirY"]) / nrm,
-        "world_forward_Z": float(c["m_worldForwardDirZ"]) / nrm,
-        "world_right_X": float(c["m_worldRightDirX"]) / nrm, "world_right_Y": float(c["m_worldRightDirY"]) / nrm,
-        "world_right_Z": float(c["m_worldRightDirZ"]) / nrm,
-        "gforce_X": _g(c["m_gForceLateral"]), "gforce_Y": _g(c["m_gForceVertical"]),
-        "gforce_Z": _g(c["m_gForceLongitudinal"]),
+        "world_position_X": -float(c["m_worldPositionX"]), "world_position_Y": float(c["m_worldPositionZ"]),
+        "world_position_Z": float(c["m_worldPositionY"]),
+        "world_forward_X": -float(c["m_worldForwardDirX"]) / nrm, "world_forward_Y": float(c["m_worldForwardDirZ"]) / nrm,
+        "world_forward_Z": float(c["m_worldForwardDirY"]) / nrm,
+        "world_right_X": -float(c["m_worldRightDirX"]) / nrm, "world_right_Y": float(c["m_worldRightDirZ"]) / nrm,
+        "world_right_Z": float(c["m_worldRightDirY"]) / nrm,
+        "gforce_X": -_g(c["m_gForceLongitudinal"]), "gforce_Y": _g(c["m_gForceLateral"]),
+        "gforce_Z": _g(c["m_gForceVertical"]),
         "yaw": float(c["m_yaw"]), "pitch": float(c["m_pitch"]), "roll": float(c["m_roll"]),
     }
 
@@ -170,7 +187,10 @@ def motion_row(c) -> dict[str, float]:
 def motion_ex_row(c) -> dict[str, float]:
     """CarMotionEX record -> SRT channels."""
     out: dict[str, float] = {}
-    out.update(_arr("susp_pos", c["m_suspensionPosition"]))
+    pos = c["m_suspensionPosition"]
+    for i in range(4):
+        k, c0 = SUSP_POS_FIT["front" if i < 2 else "rear"]
+        out[f"susp_pos_{i}"] = k * float(pos[SRT_WHEEL_FROM_UDP[i]]) + c0
     out.update(_arr("susp_vel", c["m_suspensionVelocity"]))
     out.update(_arr("susp_acc", c["m_suspensionAcceleration"]))
     out.update(_arr("wheel_speed", c["m_wheelSpeed"]))
@@ -186,9 +206,14 @@ def motion_ex_row(c) -> dict[str, float]:
     out["aero_height_0"] = float(c["m_frontAeroHeight"])
     out["aero_height_1"] = float(c["m_rearAeroHeight"])
     out["cog_height"] = float(c["m_heightOfCOGAboveGround"])
-    for ax in "XYZ":
-        out[f"angular_vel_{ax}"] = float(c[f"m_angularVelocity{ax}"])
-        out[f"angular_acc_{ax}"] = float(c[f"m_angularAcceleration{ax}"])
+    # UDP local frame: X = left, Y = up, Z = forward -> SRT local frame: X forward, Y right, Z down
+    out["velocity_X"] = float(c["m_localVelocityZ"])
+    out["velocity_Y"] = -float(c["m_localVelocityX"])
+    out["velocity_Z"] = -float(c["m_localVelocityY"])
+    for kind, dst in (("Velocity", "angular_vel"), ("Acceleration", "angular_acc")):
+        out[f"{dst}_X"] = -float(c[f"m_angular{kind}X"])
+        out[f"{dst}_Y"] = float(c[f"m_angular{kind}Z"])
+        out[f"{dst}_Z"] = float(c[f"m_angular{kind}Y"])
     out["chassis_yaw"] = float(c["m_chassisYaw"])
     out["chassis_pitch"] = float(c["m_chassisPitch"])
     return out
@@ -207,17 +232,18 @@ def telemetry2_row(c) -> dict[str, float]:
 
 def lap_row(c) -> dict[str, float]:
     """LapData record -> SRT channels (lap/bin handled by the recorder)."""
+    trap_lap = int(c["m_speedTrapFastestLap"])
     return {
         "pit_status": int(c["m_pitStatus"]),
-        "race_position": int(c["m_carPosition"]),
+        "race_position": int(c["m_carPosition"]) - 1,  # SRT is 0-based
         "penalties": int(c["m_penalties"]),
         "warnings": int(c["m_totalWarnings"]),
         "corner_cut_warnings": int(c["m_cornerCuttingWarnings"]),
-        "startGridPosition": int(c["m_gridPosition"]),
+        "startGridPosition": int(c["m_gridPosition"]) - 1,  # 0-based, -1 = none
         "pitLaneTime": float(c["m_pitLaneTimeInLaneInMS"]) / 1000.0,
         "pitStopTime": float(c["m_pitStopTimerInMS"]) / 1000.0,
-        "speedTrapMax": float(c["m_speedTrapFastestSpeed"]),
-        "speedTrapLap": int(c["m_speedTrapFastestLap"]),
+        "speedTrapMax": float(c["m_speedTrapFastestSpeed"]) / 3.6,  # m/s
+        "speedTrapLap": -1 if trap_lap in (0, 255) else trap_lap - 1,  # SRT: 0-based lap, -1 = none
         "safetyCarDelta": float(c["m_safetyCarDelta"]),
         "delta_front": (int(c["m_deltaToCarInFrontInMinutesPart"]) * 60000 + int(c["m_deltaToCarInFrontInMSPart"])) / 1000.0,
         "delta_leader": (int(c["m_deltaToRaceLeaderInMinutesPart"]) * 60000 + int(c["m_deltaToRaceLeaderInMSPart"])) / 1000.0,
@@ -237,4 +263,75 @@ def session_row(b) -> dict[str, float]:
         "sessionLength": int(b["m_sessionLength"]),
         "num_sc": int(b["m_numSafetyCarPeriods"]), "num_vsc": int(b["m_numVirtualSafetyCarPeriods"]),
         "num_red": int(b["m_numRedFlagPeriods"]),
+        "steeringAssist": int(b["m_steeringAssist"]), "brakeAssist": int(b["m_brakingAssist"]),
+        "gearAssist": int(b["m_gearboxAssist"]), "pitAssist": int(b["m_pitAssist"]),
+        "pitReleaseAssist": int(b["m_pitReleaseAssist"]), "ersAssist": int(b["m_ERSAssist"]),
+        "drsAssist": int(b["m_DRSAssist"]), "racingLineAssist": int(b["m_dynamicRacingLine"]),
+        "racingLineTypeAssist": int(b["m_dynamicRacingLineType"]),
+        "absAssist": int(b["m_antiLockBrakesAssist"]), "tractionCtrlAssist": int(b["m_tractionControlAssist"]),
     }
+
+
+# --------------------------------------------------------------------------- legacy recordings
+
+_WHEEL_PREFIXES = (
+    "brake_temp", "tyre_temp", "tyre_tempInternalAir", "tyre_press", "terrain", "tyre_wear", "tyre_damage",
+    "tyre_blister", "brake_damage", "susp_pos", "susp_vel", "susp_acc", "wheel_speed", "wheel_slip_ratio",
+    "wheel_slip_angle", "wheel_lat_force", "wheel_long_force", "wheel_vert_force", "wheel_camber", "wheel_camber_gain",
+)
+
+
+def legacy_live_to_srt(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert a frame recorded before the U3 fixes (UDP wheel order and axes) to the SRT convention.
+
+    The old recordings stored world velocity; it is rotated into the local frame with the stored
+    direction vectors (same result as MotionEx local velocity within interpolation error).
+    """
+    src = df
+    cols: dict[str, np.ndarray] = {}
+    for pre in _WHEEL_PREFIXES:
+        names = [f"{pre}_{i}" for i in range(4)]
+        if all(n in src.columns for n in names):
+            for i in range(4):
+                vals = src[f"{pre}_{SRT_WHEEL_FROM_UDP[i]}"].to_numpy(float)
+                if pre == "susp_pos":
+                    k, c0 = SUSP_POS_FIT["front" if i < 2 else "rear"]
+                    vals = k * vals + c0
+                cols[names[i]] = vals
+    vel = [f"velocity_{a}" for a in "XYZ"]
+    fwd = [f"world_forward_{a}" for a in "XYZ"]
+    rgt = [f"world_right_{a}" for a in "XYZ"]
+    if all(c in src.columns for c in vel + fwd + rgt):
+        v, f, r = (src[x].to_numpy(float) for x in (vel, fwd, rgt))
+        up = np.cross(r, f)
+        cols["velocity_X"] = (v * f).sum(1)
+        cols["velocity_Y"] = (v * r).sum(1)
+        cols["velocity_Z"] = -(v * up).sum(1)
+    for pre in ("world_position", "world_forward", "world_right"):
+        x, y, z = (f"{pre}_{a}" for a in "XYZ")
+        if all(c in src.columns for c in (x, y, z)):
+            cols[x], cols[y], cols[z] = -src[x].to_numpy(float), src[z].to_numpy(float), src[y].to_numpy(float)
+    if all(f"gforce_{a}" in src.columns for a in "XYZ"):  # legacy: X lateral, Y vertical, Z longitudinal
+        cols["gforce_X"] = -src["gforce_Z"].to_numpy(float)
+        cols["gforce_Y"] = src["gforce_X"].to_numpy(float)
+        cols["gforce_Z"] = src["gforce_Y"].to_numpy(float)
+    for pre in ("angular_vel", "angular_acc"):
+        if all(f"{pre}_{a}" in src.columns for a in "XYZ"):
+            cols[f"{pre}_X"] = -src[f"{pre}_X"].to_numpy(float)
+            cols[f"{pre}_Y"] = src[f"{pre}_Z"].to_numpy(float)
+            cols[f"{pre}_Z"] = src[f"{pre}_Y"].to_numpy(float)
+    if "clutch" in src.columns and float(src["clutch"].max()) > 1.5:
+        cols["clutch"] = src["clutch"].to_numpy(float) / 100.0
+    if "race_position" in src.columns:
+        cols["race_position"] = src["race_position"].to_numpy(float) - 1
+    if "startGridPosition" in src.columns:
+        cols["startGridPosition"] = src["startGridPosition"].to_numpy(float) - 1
+    if "speedTrapMax" in src.columns:
+        cols["speedTrapMax"] = src["speedTrapMax"].to_numpy(float) / 3.6
+    if "speedTrapLap" in src.columns:
+        lapcol = src["speedTrapLap"].astype(float)
+        cols["speedTrapLap"] = (lapcol - 1).where(~lapcol.isin([0, 255]), -1).to_numpy(float)
+    out = src.drop(columns=[c for c in ("rpm_perc",) if c in src.columns]).copy()
+    for name, vals in cols.items():
+        out[name] = vals
+    return out
