@@ -24,15 +24,6 @@ def live_status(request: Request):
     return to_jsonable({"enabled": True, **ing.status(), "snapshot": ing.engine.snapshot()})
 
 
-@router.post("/api/live/reference")
-def set_reference(mode: str, request: Request):
-    """Switch the delta reference between the library personal best ('pb') and this session's best."""
-    ing = _ingest(request.app)
-    if ing is not None and mode in ("pb", "session"):
-        ing.engine.ref_mode = mode
-    return {"mode": ing.engine.ref_mode if ing else None}
-
-
 @router.websocket("/ws/live")
 async def live_ws(ws: WebSocket) -> None:
     token = ws.app.state.config.access_token
@@ -49,6 +40,8 @@ async def live_ws(ws: WebSocket) -> None:
     ing.clients.add(q)
     try:
         await ws.send_json(ing.status())
+        for ev in list(ing.recent_events):
+            await ws.send_json(to_jsonable(ev))
         while True:
             await ws.send_json(await q.get())
     except (WebSocketDisconnect, RuntimeError):

@@ -8,4 +8,5 @@ forward_to = ""         # relay raw UDP packets to other apps; empty = off
 # forward_to = ["127.0.0.1:20778", "127.0.0.1:20779"]   # SRT on 20778, SimHub on 20779
 access_token = ""       # empty = open; otherwise pass ?token=... once (it is kept in a cookie)
 live_rate_hz = 10       # live snapshot rate
+wing_change_s = 5.0     # extra stop time for a new front wing (assumption used by the live damage call)
 # app_root = "C:/path/to/library"   # folder holding data/telemetry.db; default = repo root

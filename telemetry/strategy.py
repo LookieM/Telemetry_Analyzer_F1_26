@@ -560,8 +560,10 @@ def plan_from_state(
     box_now, sc_box = green[0], option(0, pit * params.sc_pit_factor)
     stay = min(green[1:], default=INF)
     best = min(green)
-    window = [k for k, v in enumerate(green) if v <= best + params.window_tolerance_s]
     k_best = int(np.argmin(green))
+    no_more_stops = bool(np.isfinite(best)) and k_best == remaining  # running to the flag is the best option
+    # the box window lists real stops only (k == remaining means "no stop")
+    window = [k for k, v in enumerate(green) if k < remaining and v <= best + params.window_tolerance_s]
     # compound to fit when boxing at the best lap
     rest = remaining - k_best
     fit, fit_cost = None, INF
@@ -582,7 +584,8 @@ def plan_from_state(
         "call_green": "BOX" if box_now <= stay else "STAY",
         "call_sc": "BOX" if sc_box < stay else "STAY",
         "best_in_laps": k_best,
-        "box_window": [int(lap) + window[0], int(lap) + window[-1]] if np.isfinite(best) else None,
+        "box_window": [int(lap) + window[0], int(lap) + window[-1]] if (window and np.isfinite(best)) else None,
+        "no_more_stops": no_more_stops,
         "fit_compound": fit,
         "fit_label": _short(costs.specs, fit) if fit is not None else None,
         "can_finish_without_stop": max_more == remaining and bool(np.isfinite(green[-1])),

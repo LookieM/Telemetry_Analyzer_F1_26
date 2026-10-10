@@ -18,6 +18,7 @@ class Config:
     forward_to: str = ""  # "host:port, host:port" (TOML string or list) to relay raw UDP to other apps; empty = off
     access_token: str = ""  # empty = open; otherwise required for /api and /ws
     live_rate_hz: int = 10
+    wing_change_s: float = 5.0  # extra stop time for a new front wing (assumed; used by the live damage call)
     app_root: Path = field(default_factory=lambda: REPO_ROOT)
 
 

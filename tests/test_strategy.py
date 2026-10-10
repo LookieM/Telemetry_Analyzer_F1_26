@@ -125,3 +125,14 @@ def test_plan_from_state_agrees_with_race_calls_and_window():
     early = plan_from_state(specs, params, lap=2, compound=plan.compounds[0], age=2, used={plan.compounds[0]})
     assert early["call_green"] == "STAY" and early["box_window"][0] > 2
     assert plan_from_state(specs, params, lap=30, compound=plan.compounds[0], age=5, used={plan.compounds[0]}) is None
+
+
+def test_plan_from_state_late_race_says_no_more_stops():
+    from telemetry.strategy import plan_from_state
+
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    # one stop done (soft then hard), 5 laps to go on fresh-ish hards: running to the flag is best
+    st = plan_from_state(specs, params, lap=25, compound=20, age=6, used={18, 20})
+    assert st["no_more_stops"] and st["call_green"] == "STAY"
+    assert st["box_window"] is None or st["box_window"][1] < 30

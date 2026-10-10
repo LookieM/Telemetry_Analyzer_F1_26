@@ -37,6 +37,8 @@ class LiveState:
         pid, rec = parsed
         h = rec["header"]
         uid = int(h["m_sessionUID"])
+        if uid == 0:
+            return None  # menus / results screen: not a session, must not reset the live state
         if uid != self.uid:
             self.uid = uid
             self.pk.clear()

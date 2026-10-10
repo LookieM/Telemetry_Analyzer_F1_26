@@ -50,6 +50,10 @@
 .lv-delta.fast .lv-delta-val { color: var(--good); }
 .lv-delta.slow .lv-delta-val { color: var(--bad); }
 .lv-delta-ref { color: var(--text-dim); font-size: 0.95em; }
+.lv-delta-last { margin-top: 0.25em; font-size: 1.15em; color: var(--text-dim); }
+.lv-delta-last b { font-family: var(--font-mono); font-size: 1.3em; }
+.lv-delta-last.fast b { color: var(--good); }
+.lv-delta-last.slow b { color: var(--bad); }
 .lv-times { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em 0.8em; align-content: center; }
 .lv-times b { font-size: 1.7em; font-family: var(--font-mono); font-weight: 600; }
 .lv-sectors { grid-column: 1 / -1; display: flex; gap: 1.2em; font-family: var(--font-mono); color: var(--text-dim); }
@@ -64,6 +68,9 @@
 .lv-trace-zero { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 6 6; }
 .lv-trace-line { fill: none; stroke: var(--warn); stroke-width: 3; }
 .lv-trace-dot { fill: var(--warn); }
+.lv-trace-line.last { stroke: var(--info); stroke-width: 2; opacity: 0.75; }
+.lg-best { fill: var(--warn); }
+.lg-last { fill: var(--info); }
 .lv-trace-lbl { fill: var(--text-dim); font-size: 16px; }
 
 /* tyres */
@@ -116,3 +123,20 @@
 .lv-events .ev { padding: 0.1em 0.6em; border-radius: 0.3em; background: var(--panel-2); border: 1px solid var(--border); }
 .lv-events .ev-box { border-color: var(--bad); color: var(--bad); }
 .lv-events .ev-sc, .lv-events .ev-penalty { border-color: var(--warn); color: var(--warn); }
+.lv-events .ev-damage { border-color: var(--bad); color: var(--bad); }
+
+/* damage */
+.lv-damage { display: flex; flex-direction: column; gap: 0.35em; }
+.lv-damage.ok { flex-direction: row; align-items: baseline; gap: 1em; }
+.lv-damage.ok h3 { margin: 0; }
+.lv-damage.box { border-color: var(--bad); background: rgba(215, 38, 61, 0.14); }
+.lv-wear { margin-left: auto; color: var(--text-dim); font-size: 0.8em; }
+.lv-damage-parts { display: flex; flex-wrap: wrap; gap: 0.4em; }
+.dmg { padding: 0.1em 0.55em; border-radius: 0.3em; border: 1px solid var(--border); background: var(--panel-2); font-size: 0.95em; }
+.dmg.minor { color: var(--text); }
+.dmg.warn { border-color: var(--warn); color: var(--warn); }
+.dmg.bad { border-color: var(--bad); color: var(--bad); }
+.lv-advice { font-weight: 600; }
+.lv-advice.call-box { color: var(--bad); font-size: 1.1em; }
+.lv-advice.call-at_stop { color: var(--warn); }
+.lv-note { font-size: 0.8em; }

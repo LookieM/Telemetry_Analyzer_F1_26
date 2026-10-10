@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 import socket
 import time
 from pathlib import Path
@@ -44,6 +45,8 @@ class SessionManager:
 
     def feed(self, data: bytes, t: float | None = None) -> None:
         self.packets += 1
+        if len(data) >= 15 and int.from_bytes(data[7:15], "little") == 0:
+            return  # menus / results screen: not a session (would otherwise split a recording)
         if self.rec.is_new_session(data):
             self._finish()
         self.rec.feed(data, t)
@@ -139,8 +142,9 @@ class UdpIngest:
         self.cfg = cfg
         self.loop: asyncio.AbstractEventLoop | None = None
         self.live = LiveState()
-        self.engine = LiveEngine(self.live, cfg.app_root)
+        self.engine = LiveEngine(self.live, cfg.app_root, wing_change_s=cfg.wing_change_s)
         self.clients: set[asyncio.Queue] = set()
+        self.recent_events: deque[dict] = deque(maxlen=12)  # replayed to a client that connects late
         self.mgr = SessionManager(self._queue_ingest, on_lap=self._queue_checkpoint)
         self.live_dir = cfg.app_root / "data" / "live"
         self.transport = None
@@ -200,6 +204,7 @@ class UdpIngest:
                 if self.engine.strategy_dirty and (strat_task is None or strat_task.done()):
                     strat_task = asyncio.create_task(asyncio.to_thread(self.engine.update_strategy))
                 msgs = self.engine.pop_events()
+                self.recent_events.extend(msgs)
                 snap = self.engine.snapshot() if self.clients else None
                 if snap is not None:
                     msgs.append(snap)

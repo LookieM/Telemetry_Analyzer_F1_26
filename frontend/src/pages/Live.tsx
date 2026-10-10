@@ -2,7 +2,7 @@ import { useEffect, useMemo } from "react"
 import { Link } from "react-router-dom"
 import { formatLapTime, fmt, fmtSigned } from "../lib/format"
 import { ERS_MODES, compoundColor, gapLabel, useLive } from "../lib/live"
-import type { LiveRival, LiveSnapshot, LiveStrategy, LiveWheel } from "../lib/live"
+import type { LiveDamage, LiveRival, LiveSnapshot, LiveStrategy, LiveWheel } from "../lib/live"
 import "./Live.css"
 
 const LAYOUT: ("FL" | "FR" | "RL" | "RR")[] = ["FL", "FR", "RL", "RR"]
@@ -18,32 +18,86 @@ function Bar({ value, max, color, label, warn }: { value: number; max: number; c
   )
 }
 
-function DeltaTrace({ points, ref_ }: { points: [number, number][]; ref_: string | null }) {
+function DeltaTrace({ best, last }: { best: [number, number][]; last: [number, number][] }) {
   const W = 1000
   const H = 200
-  if (points.length < 2) return <div className="lv-trace lv-empty">Delta trace starts after the first metres{ref_ ? "" : " (no reference lap yet)"}</div>
-  const xs = points.map((p) => p[0])
-  const ys = points.map((p) => p[1])
-  const xMax = Math.max(...xs, 1)
-  const lim = Math.max(0.5, Math.min(5, Math.max(...ys.map(Math.abs))))
+  const series = [best, last].filter((pts) => pts.length >= 2)
+  if (!series.length) return <div className="lv-trace lv-empty">Delta trace starts once a full lap is on the board</div>
+  const all = series.flat()
+  const xMax = Math.max(...all.map((p) => p[0]), 1)
+  const lim = Math.max(0.5, Math.min(5, Math.max(...all.map((p) => Math.abs(p[1])))))
   const sx = (x: number) => (x / xMax) * W
   const sy = (y: number) => H / 2 - (Math.max(-lim, Math.min(lim, y)) / lim) * (H / 2 - 6)
-  const d = points.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(" ")
-  const last = points[points.length - 1]
+  const path = (pts: [number, number][]) => pts.map((p, i) => `${i ? "L" : "M"}${sx(p[0]).toFixed(1)},${sy(p[1]).toFixed(1)}`).join(" ")
+  const tip = best.length >= 2 ? best[best.length - 1] : last[last.length - 1]
   return (
     <svg className="lv-trace" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Delta over distance">
       <rect x="0" y="0" width={W} height={H / 2} className="lv-trace-slow" />
       <rect x="0" y={H / 2} width={W} height={H / 2} className="lv-trace-fast" />
       <line x1="0" x2={W} y1={H / 2} y2={H / 2} className="lv-trace-zero" />
-      <path d={d} className="lv-trace-line" vectorEffect="non-scaling-stroke" />
-      <circle cx={sx(last[0])} cy={sy(last[1])} r="6" className="lv-trace-dot" />
+      {last.length >= 2 && <path d={path(last)} className="lv-trace-line last" vectorEffect="non-scaling-stroke" />}
+      {best.length >= 2 && <path d={path(best)} className="lv-trace-line" vectorEffect="non-scaling-stroke" />}
+      <circle cx={sx(tip[0])} cy={sy(tip[1])} r="6" className="lv-trace-dot" />
       <text x="8" y="22" className="lv-trace-lbl">
         +{lim.toFixed(1)} s slower
       </text>
       <text x="8" y={H - 8} className="lv-trace-lbl">
         −{lim.toFixed(1)} s faster
       </text>
+      <text x={W - 8} y="22" textAnchor="end" className="lv-trace-lbl">
+        <tspan className="lg-best">━ session best</tspan>
+        <tspan className="lg-last" dx="18">
+          ━ last lap
+        </tspan>
+      </text>
     </svg>
+  )
+}
+
+function DamageCard({ d }: { d: LiveDamage | null }) {
+  if (!d) return null
+  const hit = d.parts.filter((p) => p.pct > 0)
+  const wear = d.wear.filter((w) => w.pct > 0).map((w) => `${w.part} ${w.pct}%`).join(" · ")
+  if (!d.any) {
+    return (
+      <div className="lv-card lv-damage ok" data-testid="damage-card">
+        <h3>Damage</h3>
+        <span className="dim">No damage</span>
+        <span className="lv-wear">{wear ? `PU wear: ${wear}` : "PU wear 0%"}</span>
+      </div>
+    )
+  }
+  const sev = (pct: number) => (pct >= 30 ? "bad" : pct >= 10 ? "warn" : "minor")
+  return (
+    <div className={`lv-card lv-damage ${d.advice.call === "BOX" ? "box" : ""}`} data-testid="damage-card">
+      <h3>Damage</h3>
+      <div className="lv-damage-parts">
+        {hit.map((p) => (
+          <span key={p.part} className={`dmg ${sev(p.pct)}`}>
+            {p.part} <b>{p.pct}%</b>
+            {p.hit_lap != null && <span className="dim"> L{p.hit_lap}</span>}
+          </span>
+        ))}
+        {d.faults.map((f) => (
+          <span key={f} className="dmg bad">
+            {f}
+          </span>
+        ))}
+      </div>
+      {d.loss && (
+        <div className="lv-kv">
+          <span>
+            measured cost <b>{fmtSigned(d.loss.loss_s, 2)} s/lap</b>
+          </span>
+          <span className="dim">
+            {d.loss.laps_before} laps before vs {d.loss.laps_after} after, fuel-corrected
+          </span>
+        </div>
+      )}
+      {d.advice.text && <div className={`lv-advice call-${(d.advice.call ?? "").toLowerCase()}`}>{d.advice.text}</div>}
+      {d.note && <div className="dim lv-note">{d.note}</div>}
+      {wear && <div className="dim lv-note">PU wear: {wear}</div>}
+    </div>
   )
 }
 
@@ -60,11 +114,34 @@ function Wheel({ name, w, limit }: { name: string; w: LiveWheel; limit: number }
       </div>
       <Bar value={w.wear ?? 0} max={100} warn={limit} color={w.wear_status === "ok" ? "var(--good)" : w.wear_status === "high" ? "var(--warn)" : "var(--bad)"} label={w.wear != null ? `${w.wear.toFixed(0)}%` : "—"} />
       {(w.blister ?? 0) > 0 && <div className="lv-blister">blister {w.blister}%</div>}
+      {(w.brake_damage ?? 0) > 0 && <div className="lv-blister">brake damage {w.brake_damage}%</div>}
     </div>
   )
 }
 
-function StrategyCard({ s, session }: { s: LiveStrategy | null; session: LiveSnapshot["session"] }) {
+function StrategyCard({ s, session, damage }: { s: LiveStrategy | null; session: LiveSnapshot["session"]; damage: LiveDamage | null }) {
+  const wingBox = damage?.advice.call === "BOX"
+  if (wingBox && (!s || !s.available || (s.call ?? s.call_green) !== "BOX")) {
+    // tyres alone would stay out, but the front wing needs changing: one clear call for the driver
+    return (
+      <div className="lv-card lv-strategy call-box" data-testid="strategy-card">
+        <div className="lv-call">
+          <span className="lv-call-word">BOX</span>
+          <span className="lv-call-sub">front wing</span>
+        </div>
+        <div className="lv-strat-grid">
+          <div>
+            <span className="k">Why</span>
+            <b>new front wing</b>
+          </div>
+          <div>
+            <span className="k">Tyres</span>
+            <b>{s?.available ? `${s.fit_label ?? "same compound"} ok` : "—"}</b>
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (!s) return <div className="lv-card lv-strategy lv-muted">{session.type === "Race" ? "Strategy call starts after the first lap." : "Strategy runs in races only."}</div>
   if (!s.available) return <div className="lv-card lv-strategy lv-muted">{s.reason ?? "No strategy model available."}</div>
   const under = session.sc > 0
@@ -79,7 +156,7 @@ function StrategyCard({ s, session }: { s: LiveStrategy | null; session: LiveSna
       <div className="lv-strat-grid">
         <div>
           <span className="k">Window</span>
-          <b>{s.box_window ? `lap ${s.box_window[0]}–${s.box_window[1]}` : "—"}</b>
+          <b>{s.no_more_stops && !s.box_window ? "no further stop" : s.box_window ? `lap ${s.box_window[0]}–${s.box_window[1]}` : "—"}</b>
           {inWindow && <span className="tag">open</span>}
         </div>
         <div>
@@ -87,7 +164,7 @@ function StrategyCard({ s, session }: { s: LiveStrategy | null; session: LiveSna
           <b>{s.fit_label ?? "—"}</b>
         </div>
         <div>
-          <span className="k">Box vs stay</span>
+          <span className="k">Boxing now costs</span>
           <b>{s.box_now_s != null && s.stay_out_s != null && Number.isFinite(s.stay_out_s) ? fmtSigned(s.box_now_s - s.stay_out_s, 1) + " s" : "forced"}</b>
         </div>
         <div>
@@ -120,6 +197,7 @@ function Rivals({ rows }: { rows: LiveRival[] }) {
               {r.name}
               {r.in_pit && <span className="tag">PIT</span>}
               {r.threat && <span className="tag bad">undercut</span>}
+              {(r.wing_damage ?? 0) >= 20 && <span className="tag bad">wing {r.wing_damage}%</span>}
             </td>
             <td>{r.you ? "—" : gapLabel(r.gap_s)}</td>
             <td>
@@ -196,9 +274,12 @@ export function LivePage() {
         <>
           {conn && <div className="lv-conn-banner">{conn}</div>}
           <section className="lv-timing">
-            <div className={`lv-delta ${s.timing.delta == null ? "" : s.timing.delta <= 0 ? "fast" : "slow"}`} data-testid="delta">
-              <span className="lv-delta-val">{s.timing.delta == null ? "—" : fmtSigned(s.timing.delta, 2)}</span>
-              <span className="lv-delta-ref">vs {s.timing.ref ?? "no reference"}</span>
+            <div className={`lv-delta ${s.timing.delta_best == null ? "" : s.timing.delta_best <= 0 ? "fast" : "slow"}`} data-testid="delta">
+              <span className="lv-delta-val">{s.timing.delta_best == null ? "—" : fmtSigned(s.timing.delta_best, 2)}</span>
+              <span className="lv-delta-ref">{s.timing.best_lap != null ? `vs session best (L${s.timing.best_lap})` : "vs session best — after the first clean lap"}</span>
+              <span className={`lv-delta-last ${s.timing.delta_last == null ? "" : s.timing.delta_last <= 0 ? "fast" : "slow"}`}>
+                vs last lap <b>{s.timing.delta_last == null ? "—" : fmtSigned(s.timing.delta_last, 2)}</b>
+              </span>
             </div>
             <div className="lv-times">
               <div>
@@ -214,7 +295,7 @@ export function LivePage() {
                 <b>{formatLapTime(s.timing.last)}</b>
               </div>
               <div>
-                <span className="k">Best</span>
+                <span className="k">Session best</span>
                 <b>{formatLapTime(s.timing.best)}</b>
               </div>
               <div className="lv-sectors">
@@ -228,14 +309,16 @@ export function LivePage() {
           </section>
 
           <section className="lv-card lv-tracecard">
-            <DeltaTrace points={live.deltaTrace} ref_={s.timing.ref} />
+            <DeltaTrace best={live.deltaTrace} last={live.lastTrace} />
           </section>
 
           <section className="lv-tyres">
             <div className="lv-tyre-head">
               <span className="chip big" style={{ background: compoundColor(s.tyres.compound) }} />
               <b>{s.tyres.label}</b>
-              <span className="dim">{s.tyres.age} laps old · limit {s.tyres.wear_limit.toFixed(0)}%</span>
+              <span className="dim">
+                {s.tyres.age} {s.tyres.age === 1 ? "lap" : "laps"} old · limit {s.tyres.wear_limit.toFixed(0)}%
+              </span>
             </div>
             <div className="lv-wheels">
               {LAYOUT.map((n) => (
@@ -281,7 +364,9 @@ export function LivePage() {
             </div>
           </section>
 
-          <StrategyCard s={s.strategy} session={s.session} />
+          <DamageCard d={s.damage} />
+
+          <StrategyCard s={s.strategy} session={s.session} damage={s.damage} />
 
           <section className="lv-card lv-rivalcard">
             <Rivals rows={s.rivals} />

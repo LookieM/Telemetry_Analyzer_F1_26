@@ -70,3 +70,26 @@ def test_checkpoint_written_each_lap_and_recovered(tmp_path):
     res = recover_checkpoints(live, tmp_path)
     assert len(res) == 1 and res[0].lap_count >= 1 and res[0].track == "Spa"
     assert not list(live.glob("*"))
+
+
+def test_uid_zero_packets_do_not_split_or_reset_a_session():
+    from telemetria_server.live.state import LiveState
+
+    mgr = SessionManager(idle_s=60)
+    live = LiveState()
+    packets = []
+    for i, (t, d) in enumerate(iter_capture(CAP)):
+        if i > 150_000:
+            break
+        packets.append((t, d))
+    zero = bytearray(packets[-1][1])
+    zero[7:15] = (0).to_bytes(8, "little")
+    for k, (t, d) in enumerate(packets):
+        mgr.feed(d, t)
+        live.feed(d, t)
+        if k == 140_000:  # a burst of menu packets in the middle
+            for _ in range(20):
+                mgr.feed(bytes(zero), t)
+                assert live.feed(bytes(zero), t) is None
+    assert not mgr.finished and mgr.rec.has_data
+    assert live.uid not in (None, 0)

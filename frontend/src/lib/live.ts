@@ -10,6 +10,7 @@ export interface LiveWheel {
   damage: number | null
   blister: number | null
   brake_temp: number
+  brake_damage?: number | null
   status: WheelStatus
   inner_status: WheelStatus
   wear_status: "ok" | "high" | "limit"
@@ -26,6 +27,17 @@ export interface LiveRival {
   last: number | null
   in_pit: boolean
   threat: boolean
+  wing_damage?: number | null
+}
+export interface LiveDamage {
+  parts: { part: string; group: "aero" | "power"; pct: number; hit_lap: number | null }[]
+  wear: { part: string; pct: number }[]
+  faults: string[]
+  front_wing_pct: number
+  loss: { loss_s: number; laps_before: number; laps_after: number; fuel_fix_s: number } | null
+  advice: { call: "BOX" | "STAY" | "AT_STOP" | "MEASURE" | null; text: string | null }
+  note: string | null
+  any: boolean
 }
 export interface LiveStrategy {
   available: boolean
@@ -34,6 +46,7 @@ export interface LiveStrategy {
   call_green?: "BOX" | "STAY"
   call_sc?: "BOX" | "STAY"
   box_window?: [number, number] | null
+  no_more_stops?: boolean
   best_in_laps?: number
   fit_label?: string | null
   box_now_s?: number | null
@@ -66,12 +79,12 @@ export interface LiveSnapshot {
     lap_time: number
     last: number | null
     best: number | null
+    best_lap: number | null
     sectors: (number | null)[]
     sector: number
-    delta: number | null
+    delta_best: number | null
+    delta_last: number | null
     predicted: number | null
-    ref: string | null
-    ref_time: number | null
     lap_distance: number
     invalid: boolean
   }
@@ -85,6 +98,7 @@ export interface LiveSnapshot {
   }
   fuel: { kg: number; capacity: number; per_lap: number | null; laps_left: number | null; margin_laps: number | null; game_laps_left: number }
   ers: { store_mj: number; mode: number; deployed_mj: number; harvested_mj: number; harvest_limit_mj: number; overtake: boolean | null; overtake_available: boolean | null; active_aero: number | null }
+  damage: LiveDamage | null
   rivals: LiveRival[]
   strategy: LiveStrategy | null
 }
@@ -130,13 +144,15 @@ export interface LiveData {
   status: LiveStatus | null
   events: LiveEvent[]
   deltaTrace: [number, number][]
+  lastTrace: [number, number][]
   socket: "connecting" | "open" | "closed"
   lastAt: number
 }
 
 export function useLive(): LiveData {
-  const [data, setData] = useState<LiveData>({ snapshot: null, status: null, events: [], deltaTrace: [], socket: "connecting", lastAt: 0 })
+  const [data, setData] = useState<LiveData>({ snapshot: null, status: null, events: [], deltaTrace: [], lastTrace: [], socket: "connecting", lastAt: 0 })
   const trace = useRef<[number, number][]>([])
+  const traceLast = useRef<[number, number][]>([])
   useEffect(() => {
     let ws: WebSocket | null = null
     let timer: number | undefined
@@ -153,12 +169,13 @@ export function useLive(): LiveData {
         const m = JSON.parse(ev.data)
         if (m.type === "snapshot") {
           const s = m as LiveSnapshot
-          trace.current = pushDelta(trace.current, s.timing.lap_distance, s.timing.delta)
-          setData((d) => ({ ...d, snapshot: s, deltaTrace: trace.current, lastAt: Date.now() }))
+          trace.current = pushDelta(trace.current, s.timing.lap_distance, s.timing.delta_best)
+          traceLast.current = pushDelta(traceLast.current, s.timing.lap_distance, s.timing.delta_last)
+          setData((d) => ({ ...d, snapshot: s, deltaTrace: trace.current, lastTrace: traceLast.current, lastAt: Date.now() }))
         } else if (m.type === "status") {
           setData((d) => ({ ...d, status: m as LiveStatus }))
         } else if (m.type === "event") {
-          setData((d) => ({ ...d, events: [m as LiveEvent, ...d.events].slice(0, 6) }))
+          setData((d) => ({ ...d, events: [m as LiveEvent, ...d.events].slice(0, 4) }))
         }
       }
     }
