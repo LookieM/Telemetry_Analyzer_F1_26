@@ -34,6 +34,10 @@ TRACK_LENGTHS_M: dict[str, float] = {
     "Las Vegas": 6201,
     "Lusail": 5419,
     "Yas Marina": 5281,
+    "Madring": 5416,  # Madrid, new in the F1 25 2026 Season Pack (2026-only)
+    "Silverstone Reverse": 5891,
+    "Spielberg Reverse": 4318,
+    "Zandvoort Reverse": 4259,
 }
 
 # Full Grand Prix distance in laps (a 50% game race is half of this, rounded up).
@@ -62,7 +66,22 @@ RACE_LAPS_FULL: dict[str, int] = {
     "Las Vegas": 50,
     "Lusail": 57,
     "Yas Marina": 58,
+    "Madring": 57,
+    "Silverstone Reverse": 52,
+    "Spielberg Reverse": 71,
+    "Zandvoort Reverse": 72,
 }
+
+# The user races 50% distance: the game rounds half the Grand Prix distance up
+# (Bahrain 57 -> 29, Spielberg 71 -> 36, Monza 53 -> 27, all seen in the library).
+RACE_SHARE = 0.5
+
+
+def race_laps(track: str | None, share: float = RACE_SHARE) -> int | None:
+    import math
+
+    full = RACE_LAPS_FULL.get(track or "")
+    return int(math.ceil(full * share)) if full else None
 
 # Approximate green-flag pit-stop loss (s, lane + stop). Only a fallback: the strategy tool
 # measures the real loss from your race sessions when it has one.
@@ -91,6 +110,30 @@ PIT_LOSS_FALLBACK_S: dict[str, float] = {
     "Las Vegas": 20.0,
     "Lusail": 26.0,
     "Yas Marina": 22.0,
+    "Silverstone Reverse": 20.0,
+    "Spielberg Reverse": 20.0,
+    "Zandvoort Reverse": 21.0,
+}
+
+# Real-world 2026 Pirelli nominations (soft, medium, hard as game actualTyreCompound codes:
+# 16=C5, 17=C4, 18=C3, 19=C2, 20=C1). Only races with a confirmed announcement are listed
+# (Pirelli / formula1.com). A provisional default: the allocation the game itself reports
+# (TyreSets packet) or what the library saw replaces it.
+PIRELLI_2026: dict[str, tuple[int, int, int]] = {
+    "Melbourne": (16, 17, 18),     # C5 C4 C3
+    "Shanghai": (17, 18, 19),      # C4 C3 C2
+    "Suzuka": (18, 19, 20),        # C3 C2 C1
+    "Miami": (16, 17, 18),
+    "Montreal": (16, 17, 18),
+    "Barcelona": (17, 18, 19),
+    "Spielberg": (16, 17, 18),
+    "Silverstone": (18, 19, 20),
+    "Zandvoort": (17, 18, 19),
+    "Monza": (16, 17, 18),
+    "Madring": (17, 18, 19),
+    "Austin": (17, 18, 19),
+    "Mexico City": (16, 17, 18),
+    "Interlagos": (16, 17, 18),
 }
 DEFAULT_PIT_LOSS_S = 22.0
 
@@ -157,6 +200,16 @@ TRACK_ALIASES: dict[str, str] = {
     "qatar": "Lusail",
     "yas marina": "Yas Marina",
     "abu dhabi": "Yas Marina",
+    "madring": "Madring",
+    "madrid": "Madring",
+    "ifema madrid": "Madring",
+    "silverstone reverse": "Silverstone Reverse",
+    "silverstone (reverse)": "Silverstone Reverse",
+    "austria reverse": "Spielberg Reverse",
+    "austria (reverse)": "Spielberg Reverse",
+    "spielberg reverse": "Spielberg Reverse",
+    "zandvoort reverse": "Zandvoort Reverse",
+    "zandvoort (reverse)": "Zandvoort Reverse",
 }
 
 # Corner catalogs: contiguous fractions of a lap. Bahrain ranges calibrated
@@ -421,4 +474,5 @@ TRACK_CORNERS_FRAC: dict[str, list[dict]] = {
 
 
 def catalog_track_names() -> list[str]:
-    return sorted(TRACK_CORNERS_FRAC.keys())
+    """Every circuit in F1 26 (F1 25 + 2026 Season Pack), incl. reverse layouts."""
+    return sorted(TRACK_LENGTHS_M.keys())

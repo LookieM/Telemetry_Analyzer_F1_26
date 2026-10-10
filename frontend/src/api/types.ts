@@ -249,6 +249,24 @@ export interface TrackModel {
   wear_limit: number
 }
 
+export interface CatalogTrack {
+  track: string
+  length_m: number | null
+  full_laps: number | null
+  race_laps: number | null
+  pit_loss_s: number
+  sessions: number
+  map: boolean
+  named_corners: boolean
+  allocation: { source: string; soft: string | null; medium: string | null; hard: string | null }
+  game_tyres: boolean
+}
+
+export interface TrackCatalog {
+  race_share: number
+  tracks: CatalogTrack[]
+}
+
 export interface AllocationPayload {
   track: string
   source: string

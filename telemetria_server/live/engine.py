@@ -162,6 +162,8 @@ class LiveEngine:
         self._dmg_prev: dict[str, int] | None = None
         self._hits: dict[str, int] = {}   # part label -> lap of the last hit
         self._comp_prev: int | None = None
+        self.game_tyres_pending: dict | None = None  # picked up by the server loop and stored off-thread
+        self._game_tyres_done: tuple | None = None
 
     # -- helpers ------------------------------------------------------------------------------
     def _emit(self, kind: str, text: str, **extra) -> None:
@@ -194,6 +196,8 @@ class LiveEngine:
         self._dmg_prev = None
         self._hits = {}
         self._comp_prev = None
+        self._game_tyres_done = None
+        self.game_tyres_pending = None
         self.s.new_session = False
 
     def _damage_now(self) -> dict[str, int] | None:
@@ -261,6 +265,22 @@ class LiveEngine:
             self.strategy_dirty = True
         self._check_damage(lap_num)
         self._read_events()
+        self._collect_game_tyres(sess)
+
+    def _collect_game_tyres(self, sess) -> None:
+        """Once per session and track: hand the game's tyre allocation / pace deltas / life to the server."""
+        ts = self.s.player_tyre_sets
+        key = (self.s.uid, int(sess["m_trackId"]))
+        if ts is None or key == self._game_tyres_done:
+            return
+        sets = [{"actual": int(x["m_actualTyreCompound"]), "visual": int(x["m_visualTyreCompound"]),
+                 "life": int(x["m_useableLife"]), "delta_ms": int(x["m_lapDeltaTime"])} for x in ts["m_tyresetData"]]
+        self._game_tyres_done = key
+        self.game_tyres_pending = {
+            "track": cols.track_name(int(sess["m_trackId"])), "sets": sets,
+            "total_laps": int(sess["m_totalLaps"]) or None,
+            "session_type": cols.session_type_name(int(sess["m_sessionType"])),
+        }
 
     def _check_damage(self, lap_num: int) -> None:
         now = self._damage_now()

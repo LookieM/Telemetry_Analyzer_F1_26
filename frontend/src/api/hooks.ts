@@ -16,6 +16,7 @@ import type {
   SessionMeta,
   Targets,
   TrackModel,
+  TrackCatalog,
   TyresPayload,
 } from "./types"
 
@@ -71,6 +72,8 @@ export const useCompoundModel = (track: string | null, state: string, wearLimit:
     queryFn: () => api.get<TrackModel>(`/tracks/${encodeURIComponent(track ?? "")}/compound-model${qs({ state, wear_limit: wearLimit })}`),
     enabled: !!track,
   })
+
+export const useTrackCatalog = () => useQuery({ queryKey: ["track-catalog"], queryFn: () => api.get<TrackCatalog>("/tracks") })
 
 export const useAllocation = (track: string | null) =>
   useQuery({

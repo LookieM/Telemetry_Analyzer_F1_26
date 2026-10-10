@@ -15,6 +15,7 @@ PID_TELEMETRY2 = 16
 class LiveState:
     def __init__(self) -> None:
         self.history: dict[int, object] = {}   # SessionHistory per car index
+        self.player_tyre_sets = None            # TyreSets body of the player's car
         self.pk: dict[int, object] = {}        # packet id -> latest body (record)
         self.header = None                      # latest header record
         self.uid: int | None = None
@@ -43,6 +44,7 @@ class LiveState:
             self.uid = uid
             self.pk.clear()
             self.history.clear()
+            self.player_tyre_sets = None
             self._last_frame = None
             self.new_session = True
         self.header = h
@@ -60,6 +62,8 @@ class LiveState:
         if now - self._rate_t >= 1.0:
             self.rate = self._rate_n / (now - self._rate_t)
             self._rate_n, self._rate_t = 0, now
+        if pid == PID_TYRESETS and int(rec["body"]["m_carIdx"]) == self.player:
+            self.player_tyre_sets = rec["body"]
         if pid == PID_HISTORY:
             self.history[int(rec["body"]["m_carIdx"])] = rec["body"]
         self.pk[pid] = rec["body"]

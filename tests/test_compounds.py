@@ -18,7 +18,8 @@ def test_actual_compound_codes_map_to_c_numbers():
 def test_roles_softest_first_and_gap_fills_the_medium():
     assert roles_from_codes([18, 19, 20]) == {18: "S", 19: "M", 20: "H"}
     assert roles_from_codes([16, 18, 8]) == {16: "S", 17: "M", 18: "H"}  # C5 + C3 seen: C4 is the medium
-    assert roles_from_codes([22, 16, 8]) == {22: "S", 16: "M"}  # adjacent pair: softest is the soft
+    assert roles_from_codes([22, 16, 8]) == {22: "S", 16: "M", 17: "H"}  # C6 + C5: nothing softer than C6, C4 is the hard
+    assert roles_from_codes([18, 19]) == {18: "S", 19: "M"}  # an ordinary adjacent pair: softest is the soft
     assert roles_from_codes([7, 8]) == {}
 
 
@@ -28,7 +29,9 @@ def test_manual_allocation_overrides_and_clears(tmp_root):
     assert alloc.source == "manual" and alloc.role(17) == "S" and alloc.role(19) == "H"
     assert alloc.label(18) == "C3 (M)" and alloc.label(7) == "Inter"
     clear_allocation("Barcelona", tmp_root)
-    assert get_allocation("Barcelona", tmp_root).source == "none"  # empty library: nothing to infer
+    # empty library: nothing to infer, so the provisional 2026 Pirelli nomination (C4/C3/C2) shows
+    fallback = get_allocation("Barcelona", tmp_root)
+    assert fallback.source == "pirelli-2026" and fallback.roles == {17: "S", 18: "M", 19: "H"}
 
 
 def test_compact_keeps_every_numeric_channel_including_constant_ones():
@@ -57,3 +60,10 @@ def test_channel_registry_resolves_aliases_and_prefers_inner_temperature():
     assert wheel_columns(df2, "brake_temp") == [f"brakeTemp{i}" for i in range(4)]
     inv = inventory(df2)
     assert "Brake temp" in set(inv["Channel"]) and "mystery" in set(inv["Channel"])
+
+
+def test_c6_pair_implies_the_harder_third_compound():
+    from telemetry.compounds import roles_from_codes
+
+    assert roles_from_codes([22, 16]) == {22: "S", 16: "M", 17: "H"}  # Montreal in the game: C6/C5 seen -> C4 hard
+    assert roles_from_codes([17, 18]) == {17: "S", 18: "M"}  # an ordinary adjacent pair stays open

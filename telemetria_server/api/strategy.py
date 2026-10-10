@@ -90,8 +90,13 @@ def build_inputs(
     alloc = get_allocation(track_n, root)
     limit = wear_limit if wear_limit is not None else default_limit(root)
     model = tyres.track_compound_model(track_n, state, root, wear_limit=limit)
-    specs = strategy.specs_from_model(model) if model.compounds else strategy.manual_specs(alloc)
     params = strategy.default_params(model, track_n)
+    if model.compounds:
+        specs = strategy.specs_from_model(model)
+    else:
+        from telemetry.compounds import get_game_tyres
+
+        specs = strategy.manual_specs(alloc, get_game_tyres(track_n, root), laps=params.laps, wear_limit=params.wear_limit_pct)
     saved_p, saved_c = strategy.load_overrides(track_n, state, root)
     params, specs = strategy.apply_overrides(params, specs, saved_p, saved_c)
     if params_in is not None:

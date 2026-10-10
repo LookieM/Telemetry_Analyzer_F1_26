@@ -142,7 +142,8 @@ def specs_from_model(model: TrackTyreModel) -> list[CompoundSpec]:
 def default_params(model: TrackTyreModel, track: str | None = None) -> RaceParams:
     track_n = normalize_track_name(track or model.track) or (track or model.track)
     full = RACE_LAPS_FULL.get(track_n)
-    laps = model.race_laps_seen or (math.ceil(full * DEFAULT_RACE_SHARE) if full else 30)
+    # Races are always 50% distance: the catalog lap count is exact; a library export can be cut short.
+    laps = math.ceil(full * DEFAULT_RACE_SHARE) if full else (model.race_laps_seen or 30)
     pit = model.pit_loss or PIT_LOSS_FALLBACK_S.get(track_n, DEFAULT_PIT_LOSS_S)
     stats = model.stats
     return RaceParams(
@@ -162,14 +163,42 @@ def default_params(model: TrackTyreModel, track: str | None = None) -> RaceParam
 _MANUAL = {"S": (-0.5, 0.25, 6.0), "M": (0.0, 0.15, 4.5), "H": (0.45, 0.09, 3.0)}
 
 
-def manual_specs(alloc: Allocation) -> list[CompoundSpec]:
-    """Editable placeholder compound model for a track the library has no long runs on."""
+GAME_LIFE_LAPS_TOLERANCE = 0.15  # game usable life is only used when captured at (about) this race length
+
+
+def manual_specs(
+    alloc: Allocation,
+    game: dict[str, Any] | None = None,
+    *,
+    laps: int | None = None,
+    wear_limit: float | None = None,
+) -> list[CompoundSpec]:
+    """Compound model for a track the library has no long runs on.
+
+    With ``game`` (compounds.get_game_tyres: what the TyreSets packet reported on this track) the
+    pace offsets come from the game's own lap-time deltas between compounds, and the wear rate from
+    its recommended usable life when that was captured at the same race length. Degradation stays
+    a generic placeholder until you have long runs on the track.
+    """
+    gc = (game or {}).get("compounds") or {}
+    by_role = {v.get("role"): v for v in gc.values()}
+    ref = by_role.get("M")
+    life_ok = bool(game and game.get("total_laps") and laps
+                   and abs(int(game["total_laps"]) - int(laps)) <= GAME_LIFE_LAPS_TOLERANCE * int(laps))
     out = []
     for code, role in sorted(alloc.roles.items(), key=lambda kv: -softness(kv[0])):
         if role not in _MANUAL:
             continue
         off, deg, wear = _MANUAL[role]
-        out.append(CompoundSpec(code, alloc.label(code), alloc.color(code), off, deg, wear, 0.3, source="manual · fill in"))
+        src = "manual · fill in"
+        g = gc.get(int(code))
+        if g and ref is not None:
+            off = (int(g["delta_ms"]) - int(ref["delta_ms"])) / 1000.0
+            src = "game pace offset · deg generic"
+            if life_ok and wear_limit and int(g.get("life") or 0) > 0:
+                wear = float(wear_limit) / int(g["life"])
+                src = f"game pace + life {int(g['life'])} laps · deg generic"
+        out.append(CompoundSpec(code, alloc.label(code), alloc.color(code), off, deg, wear, 0.3, source=src))
     if not out:  # nothing known about the track: generic C3/C2/C1
         for code, role in ((18, "S"), (19, "M"), (20, "H")):
             off, deg, wear = _MANUAL[role]

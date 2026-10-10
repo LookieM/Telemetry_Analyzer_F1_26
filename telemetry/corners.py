@@ -29,7 +29,7 @@ def normalize_track_name(track: str | None) -> str | None:
     if not track:
         return None
     t = str(track).strip()
-    if t in TRACK_CORNERS_FRAC:
+    if t in TRACK_CORNERS_FRAC or t in TRACK_LENGTHS_M:
         return t
     return TRACK_ALIASES.get(t.lower(), t)
 

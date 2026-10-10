@@ -201,6 +201,9 @@ class UdpIngest:
             await asyncio.sleep(period)
             try:
                 self.engine.tick()
+                if self.engine.game_tyres_pending is not None:
+                    payload, self.engine.game_tyres_pending = self.engine.game_tyres_pending, None
+                    self._spawn(self._store_game_tyres(payload))
                 if self.engine.strategy_dirty and (strat_task is None or strat_task.done()):
                     strat_task = asyncio.create_task(asyncio.to_thread(self.engine.update_strategy))
                 msgs = self.engine.pop_events()
@@ -220,6 +223,25 @@ class UdpIngest:
                         q.put_nowait(m)
             except Exception:
                 log.exception("live loop error")
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _store_game_tyres(self, payload: dict) -> None:
+        from telemetry.compounds import save_game_tyres
+
+        try:
+            saved = await asyncio.to_thread(
+                save_game_tyres, payload["track"], payload["sets"], total_laps=payload["total_laps"],
+                session_type=payload["session_type"], app_root=self.cfg.app_root)
+            if saved:
+                log.info("Game tyre data stored for %s: %s", payload["track"],
+                         ", ".join(f"{v['role']}={k}" for k, v in sorted(saved.items()) if v["role"] in ("S", "M", "H")))
+                self.engine.strategy_dirty = True  # allocation / priors may have changed
+        except Exception:
+            log.exception("could not store the game tyre data")
 
     def status(self) -> dict:
         s = self.live

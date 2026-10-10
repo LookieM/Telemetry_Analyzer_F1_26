@@ -71,3 +71,24 @@ def test_wing_advice_broken_wing_and_safety_car():
     assert wing_advice(30, None, sc=True, **kw)["call"] == "BOX"     # SC makes the stop cheap
     assert wing_advice(30, None, **kw)["call"] == "MEASURE"
     assert wing_advice(100, None, laps_left=1, pit_loss_s=22, wing_change_s=5, planned_stop_lap=None, lap_now=11)["call"] is None
+
+
+def test_engine_hands_over_the_game_tyre_data_once_per_session(tmp_path):
+    (tmp_path / "data").mkdir()
+    s = LiveState()
+    e = LiveEngine(s, tmp_path)
+    payloads = []
+    for i, (t, d) in enumerate(iter_capture(CAP)):
+        s.feed(d, t)
+        if i % 120 == 0:
+            e.tick()
+            if e.game_tyres_pending:
+                payloads.append(e.game_tyres_pending)
+                e.game_tyres_pending = None
+        if i > 60_000:
+            break
+    assert len(payloads) == 1
+    p = payloads[0]
+    assert p["track"] == "Spa" and p["total_laps"] == 11
+    roles = {x["actual"]: x["visual"] for x in p["sets"] if x["actual"] in (17, 18, 19)}
+    assert roles == {17: 16, 18: 17, 19: 18}  # C4 soft, C3 medium, C2 hard
