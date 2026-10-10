@@ -142,7 +142,14 @@ export function LivePage() {
     document.title = "Live — Telemetria"
   }, [])
   const stale = useMemo(() => live.socket !== "open" || !live.status?.connected, [live.socket, live.status])
-  const conn = live.socket !== "open" ? "Server offline — reconnecting…" : !live.status?.connected ? "Waiting for the game (UDP)…" : null
+  const conn =
+    live.socket !== "open"
+      ? "Server offline — reconnecting…"
+      : live.status?.udp_error
+        ? live.status.udp_error
+        : !live.status?.connected
+          ? "Waiting for the game (UDP)…"
+          : null
 
   return (
     <div className="live" data-testid="live-page">

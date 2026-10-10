@@ -95,6 +95,7 @@ export interface LiveStatus {
   packets_per_s?: number
   frame_gap_pct?: number
   recording?: boolean
+  udp_error?: string | null
 }
 export interface LiveEvent {
   type: "event"

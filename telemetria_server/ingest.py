@@ -99,6 +99,22 @@ def _hostport(text: str) -> tuple[str, int] | None:
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "0.0.0.0"}
 
 
+def udp_port_owner_free(port: int) -> bool:
+    """True if no other app holds the UDP port. Windows lets a 127.0.0.1 bind coexist with another
+    app's 0.0.0.0 bind (and then steals its packets), so both addresses are probed first."""
+    if port == 0:
+        return True
+    for addr in ("0.0.0.0", "127.0.0.1"):
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind((addr, port))
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    return True
+
+
 def forward_targets(spec: str | list[str], listen_port: int) -> list[tuple[str, int]]:
     """Parse ``"host:port, host:port"`` (or a list); drops invalid entries and our own port (a relay loop)."""
     items = spec if isinstance(spec, list) else str(spec or "").split(",")
@@ -133,6 +149,7 @@ class UdpIngest:
         self._tasks: set[asyncio.Task] = set()
         self._ticker: asyncio.Task | None = None
         self._checkpointing = False
+        self.udp_error: str | None = None
 
     async def start(self) -> bool:
         self.loop = asyncio.get_running_loop()
@@ -141,21 +158,29 @@ class UdpIngest:
                 log.info("recovered an interrupted session: %s", res.message)
         except Exception:
             log.exception("checkpoint recovery failed")
+        self.udp_error = None
+        if not udp_port_owner_free(self.cfg.udp_port):
+            self.udp_error = (f"UDP port {self.cfg.udp_port} is already used by another app (SimHub? SRT? another "
+                              f"copy of this server). Live view and recording are OFF. Move that app to another "
+                              f"port and add it to forward_to, or start with --udp-port <free port>.")
+            log.warning(self.udp_error)
+            return False
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
             sock.bind((self.cfg.host if self.cfg.host != "0.0.0.0" else "0.0.0.0", self.cfg.udp_port))
         except OSError as exc:
             sock.close()
-            log.warning("UDP port %s unavailable (%s); live recording disabled", self.cfg.udp_port, exc)
+            self.udp_error = f"UDP port {self.cfg.udp_port} unavailable ({exc}); live view and recording are OFF."
+            log.warning(self.udp_error)
             return False
         fwd = forward_targets(self.cfg.forward_to, self.cfg.udp_port)
         self.protocol = _Protocol(self.mgr, fwd, self.live)
         self.transport, _ = await self.loop.create_datagram_endpoint(lambda: self.protocol, sock=sock)
         self._ticker = asyncio.create_task(self._tick_loop())
         self._live_task = asyncio.create_task(self._live_loop())
-        log.info("listening for F1 UDP on %s:%s%s", self.cfg.host, self.cfg.udp_port,
-                 f", forwarding to {', '.join(f'{h}:{p}' for h, p in fwd)}" if fwd else "")
+        log.info("Listening for F1 UDP on %s:%s", self.cfg.host, self.cfg.udp_port)
+        log.info("Forwarding every packet to: %s", ", ".join(f"{h}:{p}" for h, p in fwd) if fwd else "nobody (forward_to is empty)")
         return True
 
     async def _tick_loop(self) -> None:
@@ -196,7 +221,7 @@ class UdpIngest:
         return {
             "type": "status", "connected": bool(s.packets) and time.time() - s.last_t < 3.0,
             "packets_per_s": round(s.rate, 1), "frame_gap_pct": round(s.gap_pct, 3),
-            "packets": s.packets, "recording": self.mgr.rec.has_data,
+            "packets": s.packets, "recording": self.mgr.rec.has_data, "udp_error": self.udp_error,
         }
 
     def _queue_ingest(self, rec: SessionRecorder) -> None:

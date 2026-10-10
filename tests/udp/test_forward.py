@@ -42,3 +42,23 @@ def test_packets_reach_every_forward_target(tmp_path):
         got = {r.recvfrom(100)[0] for _ in range(5)}
         r.close()
         assert got == {b"packet-%d" % i for i in range(5)}
+
+
+def test_port_held_by_another_app_on_any_address_is_detected(tmp_path):
+    from telemetria_server.ingest import udp_port_owner_free
+
+    for holder_addr in ("0.0.0.0", "127.0.0.1"):
+        holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        holder.bind((holder_addr, 0))
+        port = holder.getsockname()[1]
+        assert not udp_port_owner_free(port)
+
+        async def run():
+            ing = UdpIngest(Config(record=True, udp_port=port, app_root=tmp_path))
+            ok = await ing.start()
+            await ing.stop()
+            return ok, ing.udp_error
+
+        ok, err = asyncio.run(run())
+        holder.close()
+        assert not ok and "already used by another app" in err
