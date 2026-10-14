@@ -154,13 +154,15 @@ def get_allocation(track: str | None, app_root: Path | None = None) -> Allocatio
             roles = {int(rec[k]): r for k, r in (("soft", "S"), ("medium", "M"), ("hard", "H")) if rec[k] is not None}
             if roles:
                 return Allocation(track_n, roles, src)
-    roles = roles_from_codes(track_compounds_seen(track_n, app_root))
-    if roles:
-        return Allocation(track_n, roles, "inferred")
     from .track_catalog import PIRELLI_2026
 
-    if track_n in PIRELLI_2026:
-        return Allocation(track_n, dict(zip(PIRELLI_2026[track_n], ("S", "M", "H"))), "pirelli-2026")
+    roles = roles_from_codes(track_compounds_seen(track_n, app_root))
+    seed = dict(zip(PIRELLI_2026.get(track_n, ()), ("S", "M", "H")))
+    # One or two compounds seen leave the set incomplete: the nomination fills it when it agrees.
+    if roles and (len(roles) == 3 or not seed or not set(roles) <= set(seed)):
+        return Allocation(track_n, roles, "inferred")
+    if seed:
+        return Allocation(track_n, seed, "pirelli-2026")
     return Allocation(track_n, {}, "none")
 
 

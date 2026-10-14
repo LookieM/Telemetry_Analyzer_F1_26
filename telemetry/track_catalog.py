@@ -203,6 +203,7 @@ TRACK_ALIASES: dict[str, str] = {
     "madring": "Madring",
     "madrid": "Madring",
     "ifema madrid": "Madring",
+    "track42": "Madring",  # live recordings made before UDP id 42 had a name
     "silverstone reverse": "Silverstone Reverse",
     "silverstone (reverse)": "Silverstone Reverse",
     "austria reverse": "Spielberg Reverse",

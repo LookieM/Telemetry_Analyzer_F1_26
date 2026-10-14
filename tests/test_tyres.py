@@ -9,6 +9,8 @@ import pytest
 from conftest import ROOT, needs_library, session_by_source
 from telemetry.tyres import (
     TyreTargets,
+    _assume,
+    _wear_rate,
     fit_degradation,
     measure_pit_losses,
     pressure_recommendation,
@@ -32,6 +34,20 @@ def test_degradation_fit_finds_a_cliff():
 
 def test_degradation_needs_three_laps():
     assert fit_degradation(np.array([0.0, 1.0]), np.array([90.0, 90.2])).slope is None
+
+
+def test_wear_rate_skips_a_stint_logged_at_one_tyre_age():
+    # Miami FP1 export: the game reported tyre age 0 on both laps of a set (polyfit used to crash).
+    tbl = pd.DataFrame({"lap": [1, 2], "lap_class": ["push", "push"], "age": [0, 0], "W_FL": [12.3, 17.2]})
+    assert _wear_rate(tbl, [1, 2], "FL") is None
+
+
+def test_unmeasured_compound_sits_between_its_measured_neighbours():
+    # Miami: C5 and C3 measured, C4 never run. Scaling up from C3 alone made it wear faster than C5.
+    wear = {16: 8.76, 18: 7.26}
+    assert _assume(17, wear, lambda v, k: v * 1.35**k) == pytest.approx(8.01)
+    assert _assume(19, wear, lambda v, k: v * 1.35**k) == pytest.approx(7.26 / 1.35)  # harder than all: from C3
+    assert _assume(17, {}, lambda v, k: v) is None
 
 
 def test_pressure_recommendation_moves_the_cold_set_by_the_hot_error():

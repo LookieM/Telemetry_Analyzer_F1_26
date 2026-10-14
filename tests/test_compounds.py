@@ -34,6 +34,16 @@ def test_manual_allocation_overrides_and_clears(tmp_root):
     assert fallback.source == "pirelli-2026" and fallback.roles == {17: "S", 18: "M", 19: "H"}
 
 
+def test_one_compound_seen_takes_the_nomination_when_it_agrees(tmp_root, monkeypatch):
+    import telemetry.compounds as comp
+
+    monkeypatch.setattr(comp, "track_compounds_seen", lambda track, root=None: [17])  # a short race on C4 only
+    alloc = get_allocation("Track42", tmp_root)  # pre-catalog live name of Madring (nomination C4/C3/C2)
+    assert alloc.source == "pirelli-2026" and alloc.roles == {17: "S", 18: "M", 19: "H"}
+    monkeypatch.setattr(comp, "track_compounds_seen", lambda track, root=None: [20])  # C1 is not in it
+    assert get_allocation("Madring", tmp_root).roles == {20: "S"}
+
+
 def test_compact_keeps_every_numeric_channel_including_constant_ones():
     df = pd.DataFrame(
         {

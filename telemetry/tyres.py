@@ -320,7 +320,8 @@ def _wear_rate(wheel_tbl: pd.DataFrame, laps: list[int], wheel: str) -> float | 
         return None
     part = wheel_tbl[wheel_tbl["lap"].isin(laps) & ~wheel_tbl["lap_class"].isin(["pit", "invalid"])]
     part = part[part[col].notna()]
-    if len(part) < 2:
+    # Practice exports can log the same game tyre age on every lap: no slope to fit.
+    if len(part) < 2 or np.ptp(part["age"].to_numpy(dtype=float)) == 0:
         return None
     slope = np.polyfit(part["age"].astype(float), part[col].astype(float), 1)[0]
     return float(max(0.0, slope))
@@ -706,6 +707,25 @@ def _cached_race_stats(app_root: str, session_ids: tuple[int, ...]) -> RaceStats
     return RaceStats(fuel_s_per_kg=k, fuel_pairs=n, box_wear_pct=box_p75, n_stops=len(box))
 
 
+def _assume(code: int, known: dict[int, float], step) -> float | None:
+    """
+    Value for a compound that was never run, from the measured ones: interpolated in softness
+    between the nearest softer and harder compound, else ``step(nearest, softness steps away)``.
+    So a medium between a measured soft and hard never wears faster than the soft.
+    """
+    if not known:
+        return None
+    s = softness(code)
+    softer = [c for c in known if softness(c) > s]
+    harder = [c for c in known if softness(c) < s]
+    if softer and harder:
+        a, b = min(softer, key=softness), max(harder, key=softness)
+        w = (s - softness(b)) / (softness(a) - softness(b))
+        return float(known[b] + w * (known[a] - known[b]))
+    near = min(known, key=lambda c: abs(softness(c) - s))
+    return float(step(known[near], s - softness(near)))
+
+
 def track_compound_model(
     track: str,
     state: str = "dry",
@@ -840,9 +860,11 @@ def _cached_model(
             offset, deg, wear, warm = ASSUMED_PACE_STEP_S * steps, m["slope"], m["wear"], m["warmup"]
         elif ref_m:
             source = "assumed"
-            offset = ASSUMED_PACE_STEP_S * steps
-            deg = ref_m["slope"] * ASSUMED_DEG_FACTOR**steps
-            wear = ref_m["wear"] * ASSUMED_WEAR_FACTOR**steps if ref_m["wear"] else None
+            offset = _assume(code, {c: offsets.get(c, ASSUMED_PACE_STEP_S * (softness(c) - softness(ref))) for c in measured},
+                             lambda v, k: v + ASSUMED_PACE_STEP_S * k)
+            deg = _assume(code, {c: mm["slope"] for c, mm in measured.items()}, lambda v, k: v * ASSUMED_DEG_FACTOR**k)
+            wear = _assume(code, {c: mm["wear"] for c, mm in measured.items() if mm["wear"]},
+                           lambda v, k: v * ASSUMED_WEAR_FACTOR**k)
             warm = ref_m["warmup"]
         else:
             continue
