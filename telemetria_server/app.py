@@ -13,6 +13,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from telemetry.db import ensure_session_meta_schema, init_db
 from telemetry.progress import ensure_progress_schema
+from telemetry.setup_reread import reread_library_setups
 
 from .api import imports, laps, library, live, settings, strategy, tracks, tyres
 from .config import REPO_ROOT, Config
@@ -47,6 +48,7 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
         init_db(cfg.app_root)
         ensure_session_meta_schema(cfg.app_root)
         ensure_progress_schema(cfg.app_root)
+        reread_library_setups(cfg.app_root)  # once ever; backs up the database first
         ingest = None
         if cfg.record:
             ingest = UdpIngest(cfg)

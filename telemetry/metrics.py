@@ -7,6 +7,7 @@ import threading
 import numpy as np
 import pandas as pd
 
+from .garage import garage_from_raw
 from .loader import mean_setup
 
 
@@ -635,4 +636,4 @@ def setup_snapshot(df: pd.DataFrame, lap: int | None = None) -> dict:
     if snap:
         return snap
     slice_df = df if lap is None else df[df["lap"] == lap]
-    return mean_setup(slice_df)
+    return garage_from_raw(mean_setup(slice_df))

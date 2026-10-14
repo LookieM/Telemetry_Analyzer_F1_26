@@ -8,6 +8,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from .garage import garage_from_raw, to_garage
+
 COLUMN_ALIASES: dict[str, list[str]] = {
     "lap": ["lapNum", "Lap", "CurrentLap", "lap_num", "lapIndex"],
     "throttle": ["throttle", "Throttle"],
@@ -31,7 +33,8 @@ COLUMN_ALIASES: dict[str, list[str]] = {
 # Tyre / corner indexing in SRT: 0=RL, 1=RR, 2=FL, 3=FR (common game convention)
 TYRE_LABELS = ("RL", "RR", "FL", "FR")
 
-# Garage channels logged in SRT exports (also persisted in compact Parquet after import)
+# Raw garage channels logged in SRT exports (also persisted in compact Parquet after import).
+# Per-wheel indices are SRT order (0=FL, 1=FR, 2=RL, 3=RR); `telemetry.garage` turns them into the garage setup.
 SETUP_CHANNEL_KEYS: tuple[str, ...] = (
     "fuel_setup",
     "wing_setup_0",
@@ -40,10 +43,16 @@ SETUP_CHANNEL_KEYS: tuple[str, ...] = (
     "diff_offThrottle_setup",
     "camber_setup_0",
     "camber_setup_1",
+    "camber_setup_2",
+    "camber_setup_3",
     "toe_setup_0",
     "toe_setup_1",
+    "toe_setup_2",
+    "toe_setup_3",
     "susp_spring_setup_0",
     "susp_spring_setup_1",
+    "susp_spring_setup_2",
+    "susp_spring_setup_3",
     "arb_setup_0",
     "arb_setup_1",
     "susp_height_setup_0",
@@ -52,6 +61,8 @@ SETUP_CHANNEL_KEYS: tuple[str, ...] = (
     "susp_height_setup_3",
     "brake_bias_setup",
     "brake_press_setup",
+    "brake_engine_setup",
+    "ballast_setup",
     "front_brake_bias",
     "tyre_press_setup_0",
     "tyre_press_setup_1",
@@ -199,7 +210,7 @@ def _stable_setup_value(series: pd.Series) -> float:
 
 
 def mean_setup(df: pd.DataFrame) -> dict[str, float | int | str]:
-    """Extract representative setup values from a session/lap slice."""
+    """Representative RAW setup channels of a session/lap slice (SRT convention); read them with `garage_from_raw`."""
     keys: Iterable[str] = SETUP_CHANNEL_KEYS
     out: dict[str, float | int | str] = {}
     for key in keys:
@@ -247,13 +258,14 @@ def is_reset_setup(setup: dict[str, float] | None) -> bool:
         return False
     from .setup_tweaker import SETUP_PARAMS
 
+    setup = to_garage(setup)
     fw, rw = setup.get("wing_setup_0"), setup.get("wing_setup_1")
     if fw is not None and rw is not None and float(fw) <= 0 and float(rw) <= 0:
         return True
     mins = {p.key: p.min_v for p in SETUP_PARAMS}
     pinned = 0
     for key in ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1", "diff_onThrottle_setup"):
-        if key in setup and abs(float(setup[key]) - mins[key]) < 1e-6:
+        if key in setup and float(setup[key]) <= mins[key] + 1e-6:
             pinned += 1
     return pinned >= 3
 
@@ -267,13 +279,16 @@ def setup_from_telemetry(df: pd.DataFrame, lap: int | None = None) -> dict[str, 
     """
     from .setup_tweaker import normalize_setup
 
+    def read(sl: pd.DataFrame) -> dict[str, float]:
+        return normalize_setup(garage_from_raw(mean_setup(sl)))
+
     if df is None or df.empty or not has_telemetry_setup(df):
         return {}
     clean = _non_reset_rows(df)
     if clean.empty:
         return {}
     if lap is None or "lap" not in df.columns:
-        return normalize_setup(mean_setup(clean))
+        return read(clean)
 
     candidates = [clean[clean["lap"] == lap]]
     others = sorted((int(x) for x in clean["lap"].unique() if int(x) != int(lap)), key=lambda x: (abs(x - int(lap)), x))
@@ -284,10 +299,10 @@ def setup_from_telemetry(df: pd.DataFrame, lap: int | None = None) -> dict[str, 
     for sl in candidates:
         if sl.empty:
             continue
-        setup = normalize_setup(mean_setup(sl))
+        setup = read(sl)
         if setup and not is_reset_setup(setup):
             return setup
-    return normalize_setup(mean_setup(clean))
+    return read(clean)
 
 
 def _is_missing_setup_value(key: str, value: float | None) -> bool:

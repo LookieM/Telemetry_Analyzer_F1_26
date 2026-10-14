@@ -91,6 +91,7 @@ from telemetry.setup_builder import build_setup_from_practice, changes_frame
 from telemetry.coach import CoachItem, coach_feed_for_session, setup_followup_items, setup_summary_item
 from telemetry.diagnosis import build_session_diagnosis
 from telemetry.setup_history import backfill_setup_fingerprints, setup_timeline
+from telemetry.setup_reread import reread_library_setups
 from telemetry.setup_eval import NOISE_FLOOR, clear_run_cache, load_session_runs
 from telemetry.setup_journal_ui import (
     experiments_frame,
@@ -1711,7 +1712,8 @@ def library_maintenance(session_ids: tuple[int, ...]) -> dict:
     Idempotent library upkeep, once per app process and set of sessions (an import or a delete
     changes the key) instead of once per browser tab.
     """
-    out = {"scrubbed": scrub_improbable_lap_records(APP_ROOT)}
+    out = {"setup_reread": reread_library_setups(APP_ROOT)}  # once ever; backs up the database first
+    out["scrubbed"] = scrub_improbable_lap_records(APP_ROOT)
     out["progress"] = backfill_progress_from_library(APP_ROOT)  # PBs from probable laps only
     out["fingerprints"] = backfill_setup_fingerprints(APP_ROOT)
     out["tags"] = backfill_session_tags(APP_ROOT)  # blank type / track state only, never your tags

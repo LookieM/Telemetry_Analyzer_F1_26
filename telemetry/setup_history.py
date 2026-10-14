@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 
 from .corners import normalize_track_name
+from .garage import to_garage
 from .db import (
     connect,
     ensure_session_meta_schema,
@@ -39,6 +40,8 @@ _SETUP_LABELS = {
     "susp_height_setup_3": "Ride RR",
     "brake_bias_setup": "Brake bias",
     "brake_press_setup": "Brake press",
+    "brake_engine_setup": "Engine braking",
+    "ballast_setup": "Ballast",
     "front_brake_bias": "Front brake bias",
     "tyre_press_setup_0": "Press FL",
     "tyre_press_setup_1": "Press FR",
@@ -59,6 +62,7 @@ def _quantize(value: Any) -> Any:
 def normalize_setup_dict(setup: dict[str, Any] | None) -> dict[str, Any]:
     if not setup:
         return {}
+    setup = to_garage(setup)
     out: dict[str, Any] = {}
     for key in sorted(setup.keys()):
         if key.startswith("_"):

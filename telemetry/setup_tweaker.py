@@ -5,7 +5,8 @@ Parameter limits match the F1 26 in-game garage (verified from setup UI):
 Fuel, Aero, Transmission, Geometry, Suspension, Brakes, Tyres.
 
 SRT stores tyre pressures in Pascals; the UI shows psi.
-Setup wheel indices in SRT: 0/1 = front, 2/3 = rear (pressures / ride height).
+Paired params (wing, camber, toe, spring, ARB): `_0` = front, `_1` = rear. Ride height / pressure: `_0.._3` = FL, FR, RL, RR.
+Raw SRT channels are converted by `telemetry.garage`.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .garage import to_garage
 from .metrics import FUEL_S_PER_KG
 
 # F1 26 / SRT: pressures stored as Pa; garage UI uses psi
@@ -220,6 +222,19 @@ SETUP_PARAMS: list[SetupParam] = [
         "Min 80% – Max 100%. Higher → stronger initial bite.",
         display_scale=100.0,
     ),
+    SetupParam(
+        "brake_engine_setup",
+        "Engine braking",
+        "Brakes",
+        "%",
+        0.0,
+        1.0,
+        0.01,
+        0.0,
+        "Garage range 0–100%.",
+        display_scale=100.0,
+    ),
+    SetupParam("ballast_setup", "Ballast", "Suspension", "", 0, 20, 1, 0.0, "Garage ballast position."),
     # --- Tyres (psi in garage; Pa in SRT) ---
     SetupParam(
         "tyre_press_setup_0",
@@ -294,6 +309,9 @@ class SetupEstimate:
     breakdown: dict[str, float] = field(default_factory=dict)
 
 
+_NEUTRAL_KEYS = ("brake_engine_setup", "ballast_setup")  # tracked, no lap-time model
+
+
 def _param_map() -> dict[str, SetupParam]:
     return {p.key: p for p in SETUP_PARAMS}
 
@@ -341,12 +359,13 @@ def _coerce_setup_units(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_setup(raw: dict[str, Any]) -> dict[str, float]:
-    raw = _coerce_setup_units(raw or {})
+    """Garage-unit setup restricted to known params. Raw SRT channels are read via `garage.to_garage`; never clips."""
+    raw = _coerce_setup_units(to_garage(raw or {}))
     out: dict[str, float] = {}
     for p in SETUP_PARAMS:
         if p.key in raw and raw[p.key] is not None:
             try:
-                out[p.key] = float(np.clip(float(raw[p.key]), p.min_v, p.max_v))
+                out[p.key] = float(raw[p.key])
             except (TypeError, ValueError):
                 continue
     return out
@@ -432,6 +451,9 @@ def estimate_setup_delta(
         elif key == "fuel_setup":
             est = du * FUEL_S_PER_KG
             group = "fuel"
+        elif key in _NEUTRAL_KEYS:
+            est = 0.0
+            group = "brakes" if p.group == "Brakes" else "suspension"
         elif p.group == "Brakes":
             opt = 0.56
             if "press" in key:

@@ -17,6 +17,7 @@ from .db import (
     upsert_track_map,
 )
 from .insights import generate_insights
+from .garage import garage_from_raw
 from .loader import load_telemetry, mean_setup, setup_from_telemetry
 from .metrics import MIN_VALID_LAP_S, build_lap_summary, session_meta
 
@@ -114,7 +115,7 @@ def ingest_dataframe(
 
     setup = setup_from_telemetry(df, int(summary.loc[summary["is_best"], "lap"].iloc[0]))
     if not setup:
-        setup = mean_setup(df)
+        setup = garage_from_raw(mean_setup(df))
     from .setup_history import compute_setup_fingerprint
 
     setup_fp = compute_setup_fingerprint(setup)
