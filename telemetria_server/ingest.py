@@ -204,6 +204,9 @@ class UdpIngest:
                 if self.engine.game_tyres_pending is not None:
                     payload, self.engine.game_tyres_pending = self.engine.game_tyres_pending, None
                     self._spawn(self._store_game_tyres(payload))
+                if self.engine.engineer_save_pending is not None:
+                    result, self.engine.engineer_save_pending = self.engine.engineer_save_pending, None
+                    self._spawn(self._store_engineer(result))
                 if self.engine.strategy_dirty and (strat_task is None or strat_task.done()):
                     strat_task = asyncio.create_task(asyncio.to_thread(self.engine.update_strategy))
                 msgs = self.engine.pop_events()
@@ -228,6 +231,15 @@ class UdpIngest:
         task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def _store_engineer(self, result: dict) -> None:
+        from telemetry.engineer_log import save_test
+
+        try:
+            await asyncio.to_thread(save_test, result, self.cfg.app_root)
+            log.info("Engineer test stored for %s", result.get("track"))
+        except Exception:
+            log.exception("could not store the engineer test")
 
     async def _store_game_tyres(self, payload: dict) -> None:
         from telemetry.compounds import save_game_tyres

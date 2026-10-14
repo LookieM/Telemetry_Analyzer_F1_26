@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -11,14 +12,16 @@ from typing import Any
 
 import numpy as np
 
-from telemetry import compounds, tyres
+from telemetry import compounds, engineer_log, tyres
 from telemetry.corners import normalize_track_name
+from telemetry.garage import garage_from_raw
 from telemetry.metrics import FUEL_S_PER_KG
 
 from ..udp import srt_columns as cols
 from ..udp import structs
-from .state import (PID_DAMAGE, PID_EVENT, PID_LAP, PID_PARTICIPANTS, PID_SESSION, PID_STATUS, PID_TELEMETRY,
-                    PID_TELEMETRY2, LiveState)
+from .engineer import PRACTICE, Engineer, EngineerError, EngineerLap
+from .state import (PID_DAMAGE, PID_EVENT, PID_LAP, PID_PARTICIPANTS, PID_SESSION, PID_SETUP, PID_STATUS,
+                    PID_TELEMETRY, PID_TELEMETRY2, LiveState)
 
 log = logging.getLogger("telemetria.live")
 
@@ -164,6 +167,13 @@ class LiveEngine:
         self._comp_prev: int | None = None
         self.game_tyres_pending: dict | None = None  # picked up by the server loop and stored off-thread
         self._game_tyres_done: tuple | None = None
+        # engineer adapter state: API threads call the commands while the server loop ticks, hence the lock
+        self.engineer = Engineer()
+        self._eng_lock = threading.Lock()
+        self.engineer_save_pending: dict | None = None  # picked up by the server loop and stored off-thread
+        self._eng_saved = False
+        self._reset_lap_marks()
+        self._set_first_age: dict[int, int] = {}
 
     # -- helpers ------------------------------------------------------------------------------
     def _emit(self, kind: str, text: str, **extra) -> None:
@@ -198,6 +208,9 @@ class LiveEngine:
         self._comp_prev = None
         self._game_tyres_done = None
         self.game_tyres_pending = None
+        self._end_engineer()
+        self._reset_lap_marks()
+        self._set_first_age = {}
         self.s.new_session = False
 
     def _damage_now(self) -> dict[str, int] | None:
@@ -243,6 +256,7 @@ class LiveEngine:
         if dist >= 0 and (not self._cur_d or dist > self._cur_d[-1] - 1e-6):
             self._cur_d.append(dist)
             self._cur_t.append(cur_t)
+        self._mark_lap(me, status)
 
         pit = int(me["m_pitStatus"])
         self._track_len = float(sess["m_trackLength"])
@@ -266,6 +280,7 @@ class LiveEngine:
         self._check_damage(lap_num)
         self._read_events()
         self._collect_game_tyres(sess)
+        self._engineer_tick(me, sess)
 
     def _collect_game_tyres(self, sess) -> None:
         """Once per session and track: hand the game's tyre allocation / pace deltas / life to the server."""
@@ -335,6 +350,7 @@ class LiveEngine:
         if lap_num == prev + 1 and last_ms > 0:
             self.history.append(LapRecord(prev, last_ms / 1000.0, valid, self._cur_pit, self._cur_sc,
                                           fuel_start, fuel_end, dict(self._dmg_prev or {})))
+            self._engineer_lap(prev, last_ms / 1000.0, valid and not self._cur_invalid, fuel_start, fuel_end)
         if full_lap:
             t2 = t.copy()
             t2[-1] = max(t2[-1], last_ms / 1000.0)
@@ -344,7 +360,142 @@ class LiveEngine:
                 self.sess_ref = RefLap(ref.dist, ref.time, ref.total, "session best", prev)
         self._cur_d, self._cur_t = [], []
         self._cur_pit = self._cur_sc = False
+        self._reset_lap_marks()
         self.strategy_dirty = True
+
+    # -- engineer adapter (no decisions here: packets in, engineer calls out) ------------------
+    def _reset_lap_marks(self) -> None:
+        self._cur_dstat: set[int] = set()
+        self._cur_s1 = self._cur_s2 = 0.0
+        self._cur_invalid = False
+        self._age0: int | None = None
+
+    def _mark_lap(self, me, status) -> None:
+        """Per-lap facts the engineer needs that are gone by the time the lap flips."""
+        self._cur_dstat.add(int(me["m_driverStatus"]))
+        self._cur_invalid = self._cur_invalid or bool(int(me["m_currentLapInvalid"]))
+        s1 = _ms(me["m_sector1TimeInMSPart"], me["m_sector1TimeMinutesPart"])
+        s2 = _ms(me["m_sector2TimeInMSPart"], me["m_sector2TimeMinutesPart"])
+        self._cur_s1, self._cur_s2 = s1 or self._cur_s1, s2 or self._cur_s2
+        if status is not None:
+            age = int(status["m_carStatusData"][self.s.player]["m_tyresAgeLaps"])
+            if self._age0 is None:
+                self._age0 = age
+            idx = self._fitted_idx()
+            if idx is not None:
+                self._set_first_age.setdefault(idx, age)
+
+    def _fitted_idx(self) -> int | None:
+        ts = self.s.player_tyre_sets
+        return int(ts["m_fittedIdx"]) if ts is not None else None
+
+    def _tyre_sets(self) -> list[dict]:
+        ts = self.s.player_tyre_sets
+        if ts is None:
+            return []
+        return [{"compound": int(x["m_actualTyreCompound"]), "available": bool(x["m_available"]),
+                 "fitted": i == int(ts["m_fittedIdx"]), "wear": int(x["m_wear"]), "life": int(x["m_useableLife"])}
+                for i, x in enumerate(ts["m_tyresetData"]) if int(x["m_actualTyreCompound"]) > 0]
+
+    def _player_setup(self) -> dict[str, float]:
+        pk = self.s.get(PID_SETUP)
+        if pk is None:
+            return {}
+        return garage_from_raw(cols.setup_row(pk["m_carSetups"][self.s.player]))
+
+    def _eng_pump(self) -> None:
+        """Feed lines become live events; a finished program is handed over for storing (caller holds the lock)."""
+        for line in self.engineer.drain_feed():
+            self._emit("engineer", line["text"])
+        if self.engineer.phase == "done" and not self._eng_saved:
+            self._eng_saved = True
+            self.engineer_save_pending = self.engineer.result()
+
+    def _engineer_lap(self, lap: int, time_s: float, valid: bool, fuel_start, fuel_end) -> None:
+        if not self.engineer.active:
+            return
+        status, dmg = self.s.get(PID_STATUS), self.s.get(PID_DAMAGE)
+        st = status["m_carStatusData"][self.s.player] if status is not None else None
+        sectors = [self._cur_s1 or None, self._cur_s2 or None]
+        s3 = time_s - sum(sectors) if all(sectors) else None
+        idx, age0 = self._fitted_idx(), self._age0 or 0
+        el = EngineerLap(
+            lap=lap, lap_time_s=time_s, valid=valid, in_lap=2 in self._cur_dstat, out_lap=3 in self._cur_dstat,
+            pit=self._cur_pit, s1=sectors[0], s2=sectors[1], s3=s3 if s3 and s3 > 0 else None,
+            fuel_start=fuel_start, fuel_end=fuel_end,
+            compound=int(st["m_actualTyreCompound"]) if st is not None else None, tyre_set_idx=idx,
+            fresh_set=bool(idx is not None and self._set_first_age.get(idx, age0) == 0),
+            tyre_age_laps=age0,
+            wear_max_pct=float(max(dmg["m_carDamageData"][self.s.player]["m_tyresWear"])) if dmg is not None else None,
+            setup=self._player_setup())
+        with self._eng_lock:
+            self.engineer.on_lap(el)
+            self._eng_pump()
+
+    def _engineer_tick(self, me, sess) -> None:
+        if not self.engineer.active:
+            return
+        with self._eng_lock:
+            if cols.session_type_name(int(sess["m_sessionType"])) not in PRACTICE:
+                self.engineer.stop()
+            else:
+                self.engineer.on_tyre_sets(self._tyre_sets())
+                self.engineer.on_garage(int(me["m_driverStatus"]) == 0, self.s.last_t)
+                self.engineer.on_tick(self.s.last_t, int(sess["m_sessionTimeLeft"]) or None)
+            self._eng_pump()
+
+    def _end_engineer(self) -> None:
+        """New session: stop a running program (what was decided is stored) and start with a fresh engineer."""
+        with self._eng_lock:
+            if self.engineer.active:
+                self.engineer.stop()
+            self._eng_pump()
+            self.engineer = Engineer()
+            self._eng_saved = False
+
+    def engineer_models(self, track: str) -> tuple[float, dict[int, float]]:
+        """Library fuel effect and per-compound degradation for the track (heavy: call outside the lock)."""
+        fuel_k, deg = FUEL_S_PER_KG, {}
+        if self.root is None:
+            return fuel_k, deg
+        try:
+            fuel_k = float(tyres.library_race_stats(self.root).fuel_s_per_kg)
+            model = tyres.track_compound_model(normalize_track_name(track) or track, "dry", self.root)
+            deg = {int(c): float(m.deg_s_per_lap) for c, m in model.compounds.items()}
+        except Exception:
+            log.exception("engineer: no fuel / degradation model for %s", track)
+        return fuel_k, deg
+
+    def engineer_start(self, program: str, minutes: float | None = None) -> dict:
+        s = self.s
+        sess, lapd, stat = s.get(PID_SESSION), s.get(PID_LAP), s.get(PID_STATUS)
+        if sess is None or lapd is None:
+            raise EngineerError("No live session data yet")
+        track = cols.track_name(int(sess["m_trackId"]))
+        comp = int(stat["m_carStatusData"][s.player]["m_actualTyreCompound"]) if stat is not None else None
+        wet = int(sess["m_weather"]) >= 3 or (comp is not None and comp in compounds.WET_CODES)
+        stype = cols.session_type_name(int(sess["m_sessionType"]))
+        baseline = self._player_setup()
+        settled = engineer_log.settled_for(track, self.root) if self.root is not None else {}
+        fuel_k, deg = self.engineer_models(track)
+        with self._eng_lock:
+            self.engineer.on_tyre_sets(self._tyre_sets())
+            view = self.engineer.start(program, baseline, track, stype, wet, s.last_t, minutes,
+                                       int(sess["m_sessionTimeLeft"]) or None, settled, fuel_k, deg)
+            self._eng_saved = False
+            self._eng_pump()
+        return view
+
+    def engineer_command(self, name: str, *args, **kwargs) -> dict:
+        """Run an Engineer command (answer, confirm, skip, next_phase, revert, stop) and return the new view."""
+        with self._eng_lock:
+            view = getattr(self.engineer, name)(*args, **kwargs)
+            self._eng_pump()
+        return view
+
+    def _engineer_view(self) -> dict | None:
+        with self._eng_lock:
+            return self.engineer.view() if self.engineer.phase != "idle" else None
 
     def _lap_valid(self, lap: int) -> bool:
         hist = self.s.history.get(self.s.player)
@@ -372,6 +523,7 @@ class LiveEngine:
         out["damage"] = self._damage(sess, me)
         out["rivals"] = self._rivals(lapd, sess)
         out["strategy"] = self.strategy
+        out["engineer"] = self._engineer_view()
         return out
 
     def _session(self, sess, me) -> dict:

@@ -30,6 +30,7 @@ def test_engine_snapshots_over_a_real_race(tmp_path):
             assert snap["timing"]["delta_last"] is not None
         fuel_pl = snap["fuel"]["per_lap"] or fuel_pl
     assert last is not None and last["session"]["track"] == "Spa"
+    assert last["engineer"] is None and e.engineer.phase == "idle"   # a race: the engineer stays out
     # once a clean reference lap exists the delta stays within a sane band
     deltas.sort(key=abs)
     assert deltas and abs(deltas[len(deltas) // 2]) < 10  # typical laps are close to the reference
@@ -92,3 +93,42 @@ def test_engine_hands_over_the_game_tyre_data_once_per_session(tmp_path):
     assert p["track"] == "Spa" and p["total_laps"] == 11
     roles = {x["actual"]: x["visual"] for x in p["sets"] if x["actual"] in (17, 18, 19)}
     assert roles == {17: 16, 18: 17, 19: 18}  # C4 soft, C3 medium, C2 hard
+
+
+def test_engine_adapts_laps_into_the_engineer(tmp_path):
+    """Replay a race but present it as FP1: laps reach the engineer with sectors, flags, fuel, age and the garage setup."""
+    import numpy as np
+
+    from telemetria_server.live.engineer import EngineerLap
+    from telemetria_server.live.state import PID_SESSION
+
+    (tmp_path / "data").mkdir()
+    s = LiveState()
+    e = LiveEngine(s, tmp_path)
+    got: list[EngineerLap] = []
+    orig = e.engineer.__class__.on_lap
+    e.engineer.__class__.on_lap = lambda self, lap: (got.append(lap), orig(self, lap))[1]
+    try:
+        started = False
+        for i, (t, d) in enumerate(iter_capture(CAP)):
+            s.feed(d, t)
+            if i % 120 or i < 3000:
+                continue
+            if s.get(PID_SESSION) is not None:
+                sess = np.array([s.pk[PID_SESSION]])
+                sess[0]["m_sessionType"], sess[0]["m_weather"] = 1, 0
+                s.pk[PID_SESSION] = sess[0]
+            e.tick()
+            if not started and s.get(PID_SESSION) is not None:
+                e.engineer_start("short")
+                started = True
+            if len(got) >= 3 or i > 250_000:
+                break
+    finally:
+        e.engineer.__class__.on_lap = orig
+    assert started and len(got) >= 3
+    lap = got[1]
+    assert 60 < lap.lap_time_s < 200 and lap.fuel_start > lap.fuel_end > 0 and lap.compound in (17, 18, 19)
+    assert all(x is not None and x > 10 for x in (lap.s1, lap.s2, lap.s3)) and abs(sum(lap.sectors) - lap.lap_time_s) < 0.01
+    assert lap.setup["wing_setup_0"] > 0 and lap.setup["camber_setup_0"] < -1       # garage degrees, not radians
+    assert any(ev["kind"] == "engineer" for ev in e.pop_events())

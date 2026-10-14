@@ -43,5 +43,6 @@ def test_replay_over_udp_reaches_websocket(tmp_path):
         assert set(snap["tyres"]["wheels"]) == {"FL", "FR", "RL", "RR"}
         assert 0 < snap["fuel"]["kg"] < 110 and snap["timing"]["lap_time"] >= 0
         assert any(r["you"] for r in snap["rivals"])
+        assert "engineer" in snap and snap["engineer"] is None
         st = client.get("/api/live/status").json()
         assert st["enabled"] and st["packets"] > 500
