@@ -492,3 +492,58 @@ export interface EngineerView {
   long_run: EngineerLongRun | null
   feed: { t: number; text: string }[]
 }
+
+// ---------------------------------------------------------------- corners
+
+export interface CornerMetrics {
+  time_s: Num
+  entry_kmh: Num
+  vmin_kmh: Num
+  exit_kmh: Num
+  brake_m: Num
+  trail_m: Num
+  trail_s: Num
+  throttle_m: Num
+}
+
+export type SpeedClass = "slow" | "medium" | "fast"
+
+export interface CornerDef {
+  id: number
+  name: string
+  start_m: number
+  end_m: number
+  apex_m: number
+  vmin_kmh: number
+  speed_class: SpeedClass
+  merged_from: number[]
+}
+
+export interface CornerReportRow extends CornerDef {
+  focus: CornerMetrics
+  ref: CornerMetrics
+  delta: CornerMetrics
+  phases: Record<"entry" | "mid" | "exit", [number, number]>
+  callouts: string[]
+}
+
+export interface CornersPayload {
+  track: string
+  session_id: number
+  lap: number
+  reference: { session: number; lap: number }
+  corners_source: { session: number | null; lap: number | null; built_at: string }
+  corners: CornerReportRow[]
+  lap_delta: number
+  sum_corner_delta: number
+  straights_delta: number
+  start_delta: number
+}
+
+export interface TrackCornersPayload {
+  track: string
+  corners: CornerDef[]
+  source_session: number | null
+  source_lap: number | null
+  built_at: string
+}

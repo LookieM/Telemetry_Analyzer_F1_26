@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure corner detection on a lap frame (+ optional catalogue names); unknown tracks get T1..Tn
 - [ ] track_corners table, built lazily from the track's best clean lap; rebuild endpoint
@@ -13,3 +13,7 @@
 - [ ] Corners tab (between Laps and Tyres): reference picker, sortable table with losses coloured, click-to-zoom map + trace with markers, not-enough-data messages
 - [ ] Plausibility tests on real sessions (skip when absent): brake point inside corner, vmin ≤ entry/exit, stable corner count between two clean laps
 - [ ] vitest for pure helpers; headless Chrome check on a sandbox library copy
+
+## Comments
+
+- Done 2026-10-15. Deviations: corner deltas + straights deltas = lap delta (corners alone cannot); dip threshold 5 km/h (3 was unstable); corner count equal between two clean laps in ≥ 80 % of sessions, differs by ≤ 1 otherwise (driver reaches / misses full throttle between corners). Catalogue names are coarse (unmatched corners are C<n>). Corners tab defaults the reference to the fastest other clean lap.

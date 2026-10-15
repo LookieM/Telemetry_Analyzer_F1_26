@@ -6,12 +6,14 @@ import { ErrorBox, Loading, Panel } from "../components/ui"
 import { SESSION_TYPES } from "../lib/constants"
 import { formatBytes, formatLapTime } from "../lib/format"
 import { bestLapNumber } from "../lib/sessions"
+import { CornersTab } from "./CornersTab"
 import { LapsTab } from "./LapsTab"
 import { StrategyTab } from "./StrategyTab"
 import { TyresTab } from "./TyresTab"
 
 const TABS = [
   { key: "laps", label: "Laps" },
+  { key: "corners", label: "Corners" },
   { key: "tyres", label: "Tyres" },
   { key: "strategy", label: "Strategy" },
 ] as const
@@ -112,6 +114,7 @@ export function SessionPage() {
         ))}
       </nav>
       {tab === "laps" && <LapsTab detail={detail.data} focusLap={focusLap} setFocusLap={setFocusLap} />}
+      {tab === "corners" && <CornersTab detail={detail.data} focusLap={focusLap} setFocusLap={setFocusLap} />}
       {tab === "tyres" && <TyresTab detail={detail.data} focusLap={focusLap} setFocusLap={setFocusLap} />}
       {tab === "strategy" && <StrategyTab detail={detail.data} />}
     </div>

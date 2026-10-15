@@ -9,3 +9,4 @@
 - [ ] Compare and lap-channel endpoints accept and return the new channels (per-wheel ones wheel-labelled); API tests
 - [ ] Laps tab channel picker adds panes; sessions missing a channel show it disabled with a reason
 - [ ] vitest for the trace builders; headless Chrome check
+- [ ] Laps tab corner bands come from the stored track corners (same as the Corners tab), not the old catalogue spans

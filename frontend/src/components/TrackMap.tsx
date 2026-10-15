@@ -8,7 +8,7 @@ import type { MapPayload } from "../api/types"
 import { scaleColor, scaleGradient } from "../lib/colors"
 import { nearestIndex, selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned } from "../lib/format"
-import { nearestOnScreen, projectTrack, type Projection } from "../lib/maplayout"
+import { nearestOnScreen, projectTrack, zoomMapPayload, type Projection } from "../lib/maplayout"
 import { useTheme } from "../lib/theme"
 import "./TrackMap.css"
 
@@ -37,7 +37,7 @@ function dot(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fil
 }
 
 /** Everything that does not move with the cursor: outline, coloured line, corner labels. */
-function drawStatic(ctx: CanvasRenderingContext2D, data: MapPayload, proj: Projection, theme: MapTheme, w: number, h: number) {
+function drawStatic(ctx: CanvasRenderingContext2D, data: MapPayload, proj: Projection, theme: MapTheme, w: number, h: number, marks: MapMark[]) {
   ctx.clearRect(0, 0, w, h)
   ctx.lineJoin = "round"
   ctx.lineCap = "round"
@@ -72,6 +72,21 @@ function drawStatic(ctx: CanvasRenderingContext2D, data: MapPayload, proj: Proje
     if (i >= 0 && Number.isFinite(proj.px[i])) ctx.fillText(lab.text, proj.px[i] + 7, proj.py[i] - 6)
   }
   ctx.globalAlpha = 1
+  ctx.font = `600 11px ${theme.font}`
+  for (const m of marks) {
+    const i = nearestIndex(data.d, m.d)
+    if (i < 0 || !Number.isFinite(proj.px[i])) continue
+    dot(ctx, proj.px[i], proj.py[i], 5, m.color, theme.bg, 2)
+    ctx.fillStyle = theme.text
+    ctx.fillText(m.label, proj.px[i] + 8, proj.py[i] + 4)
+  }
+}
+
+/** A labelled dot on the racing line at a lap distance (brake point, full-throttle point ...). */
+export interface MapMark {
+  d: number
+  label: string
+  color: string
 }
 
 interface Props {
@@ -79,9 +94,16 @@ interface Props {
   sync: string
   title?: string
   height?: number
+  /** Show only this distance window (the line is refitted to it); null / undefined shows the whole lap. */
+  zoom?: [number, number] | null
+  marks?: MapMark[]
 }
 
-export function TrackMap({ data, sync, title, height = 520 }: Props) {
+export function TrackMap({ data: full, sync, title, height = 520, zoom = null, marks }: Props) {
+  const zoomFrom = zoom?.[0]
+  const zoomTo = zoom?.[1]
+  const data = useMemo(() => (zoomFrom != null && zoomTo != null ? zoomMapPayload(full, [zoomFrom, zoomTo]) : full), [full, zoomFrom, zoomTo])
+  const shownMarks = useMemo(() => marks ?? [], [marks])
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const staticRef = useRef<HTMLCanvasElement | null>(null)
@@ -107,8 +129,9 @@ export function TrackMap({ data, sync, title, height = 520 }: Props) {
 
   const proj = useMemo(() => (width ? projectTrack(data.x, data.y, data.outline, width, height) : null), [data, width, height])
 
-  const extIdx = group.hoverX != null && group.hoverSource !== id ? nearestIndex(data.d, group.hoverX) : null
-  const pinIdx = group.pinnedX != null ? nearestIndex(data.d, group.pinnedX) : null
+  const inView = (x: number) => data === full || (x >= (zoomFrom ?? -Infinity) && x <= (zoomTo ?? Infinity))
+  const extIdx = group.hoverX != null && group.hoverSource !== id && inView(group.hoverX) ? nearestIndex(data.d, group.hoverX) : null
+  const pinIdx = group.pinnedX != null && inView(group.pinnedX) ? nearestIndex(data.d, group.pinnedX) : null
   const liveIdx = hover ?? extIdx
 
   // Static layer, redrawn only when data / size / theme change.
@@ -122,13 +145,13 @@ export function TrackMap({ data, sync, title, height = 520 }: Props) {
     const ctx = layer.getContext("2d")
     if (!ctx) return
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    drawStatic(ctx, data, proj, readTheme(canvas), width, height)
+    drawStatic(ctx, data, proj, readTheme(canvas), width, height, shownMarks)
     canvas.width = layer.width
     canvas.height = layer.height
     canvas.style.width = `${width}px`
     canvas.style.height = `${height}px`
     canvas.dataset.ready = String(Date.now())
-  }, [data, proj, width, height, theme])
+  }, [data, proj, width, height, theme, shownMarks])
 
   // Cursor dots on top of the cached static layer.
   useEffect(() => {

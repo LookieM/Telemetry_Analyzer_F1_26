@@ -41,3 +41,10 @@ export function bestLapNumber(laps: LapSummary[]): number | null {
 export function lapLabel(lap: LapSummary, fmtTime: (s: number) => string): string {
   return `Lap ${lap.lap} — ${fmtTime(lap.lap_time)}${lap.is_best ? " ★" : ""}${lap.lap_class && lap.lap_class !== "push" ? ` (${lap.lap_class})` : ""}`
 }
+
+/** Fastest lap other than `exclude`, preferring clean ("push") laps; null when there is none. */
+export function fastestOtherLap(laps: LapSummary[], exclude: number | null): number | null {
+  const others = laps.filter((l) => l.lap !== exclude && Number.isFinite(l.lap_time) && l.lap_time > 0)
+  const pool = others.some((l) => l.lap_class === "push") ? others.filter((l) => l.lap_class === "push") : others
+  return pool.reduce<LapSummary | null>((b, l) => (b == null || l.lap_time < b.lap_time ? l : b), null)?.lap ?? null
+}

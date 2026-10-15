@@ -235,10 +235,26 @@ interface Props {
   /** Cursor group shared with the map and other charts ("lap", "stint", "race"). */
   sync: string
   testId?: string
+  /** x window to show on every pane (e.g. one corner); null / undefined shows everything. */
+  zoom?: [number, number] | null
 }
 
-export function TraceChart({ data, sync, testId }: Props) {
+/** Set the x window of every pane (the panes keep each other in sync); no window = the full data range. */
+function applyZoom(built: Built, data: TraceData, zoom: [number, number] | null) {
+  const first = data.x[0]
+  const last = data.x[data.x.length - 1]
+  const [min, max] = zoom ?? [first, last]
+  const lead = built.plots[0]
+  if (lead && Number.isFinite(min) && Number.isFinite(max) && max > min) lead.setScale("x", { min, max })
+}
+
+export function TraceChart({ data, sync, testId, zoom = null }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const builtRef = useRef<Built | null>(null)
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
+  const zoomFrom = zoom?.[0]
+  const zoomTo = zoom?.[1]
   const id = useId()
   const theme = useTheme()
 
@@ -265,6 +281,9 @@ export function TraceChart({ data, sync, testId }: Props) {
     const last = data.panes.length - 1
     data.panes.forEach((pane, i) => built.plots.push(buildPane(host, pane, i, last, data, chartTheme, width, sync, id, built)))
 
+    builtRef.current = built
+    if (zoomRef.current) applyZoom(built, data, zoomRef.current)
+
     const observer = new ResizeObserver(() => {
       const w = Math.max(320, host.clientWidth)
       for (const p of built.plots) if (Math.abs(p.width - w) > 1) p.setSize({ width: w, height: p.height })
@@ -286,8 +305,15 @@ export function TraceChart({ data, sync, testId }: Props) {
       observer.disconnect()
       built.plots.forEach((p) => p.destroy())
       built.plots = []
+      builtRef.current = null
     }
   }, [data, sync, id, theme])
+
+  useEffect(() => {
+    const built = builtRef.current
+    if (built && built.plots.length) applyZoom(built, data, zoomFrom != null && zoomTo != null ? [zoomFrom, zoomTo] : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoomFrom, zoomTo])
 
   return <div ref={hostRef} className="tc-root" data-testid={testId ?? "trace-chart"} />
 }

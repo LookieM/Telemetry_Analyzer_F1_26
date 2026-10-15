@@ -1,36 +1,21 @@
 import { useEffect, useMemo, useState } from "react"
-import { useCompare, useLapChannels, useMap, useSession, useSessions } from "../api/hooks"
+import { useCompare, useLapChannels, useMap } from "../api/hooks"
 import type { LapSummary, SectorDelta, SessionDetail } from "../api/types"
+import { LapSelect, ReferenceFields, useReference } from "../components/ReferencePicker"
 import { TraceChart } from "../components/TraceChart"
 import { TrackMap } from "../components/TrackMap"
 import { DataTable, ErrorBox, Loading, Metric, MetricRow, Panel, type Column } from "../components/ui"
 import { selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned, formatLapTime } from "../lib/format"
-import { bestLapNumber, lapLabel, pbSession } from "../lib/sessions"
+import { bestLapNumber } from "../lib/sessions"
 import { compareTrace, cornerBands, driverTrace, TRACE_CHANNELS } from "../lib/traces"
 
-type RefMode = "none" | "lap" | "session"
 const COLORS = ["speed", "throttle", "brake", "gear", "delta"] as const
 
 interface Props {
   detail: SessionDetail
   focusLap: number | null
   setFocusLap: (lap: number) => void
-}
-
-function LapSelect({ laps, value, onChange, label }: { laps: LapSummary[]; value: number | null; onChange: (lap: number) => void; label: string }) {
-  return (
-    <label className="field">
-      {label}
-      <select value={value ?? ""} onChange={(e) => onChange(Number(e.target.value))} aria-label={label}>
-        {laps.map((l) => (
-          <option key={l.lap} value={l.lap}>
-            {lapLabel(l, formatLapTime)}
-          </option>
-        ))}
-      </select>
-    </label>
-  )
 }
 
 function sectorColumns(kind: "sector" | "mini_sector", name: string): Column<SectorDelta>[] {
@@ -45,53 +30,25 @@ function sectorColumns(kind: "sector" | "mini_sector", name: string): Column<Sec
 
 export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
   const { session, laps } = detail
-  const sessions = useSessions()
   const resetCursor = useCursorStore((s) => s.reset)
   const cursor = useCursorStore(selectGroup("lap"))
 
   const best = bestLapNumber(laps)
-  const [mode, setMode] = useState<RefMode>("none")
-  const [refLap, setRefLap] = useState<number | null>(best)
-  const [refSessionId, setRefSessionId] = useState<number | null>(null)
+  const choice = useReference(detail, "none")
+  const { mode, selection } = choice
   const [color, setColor] = useState<(typeof COLORS)[number]>("speed")
 
   useEffect(() => {
     resetCursor("lap")
-    setMode("none")
-    setRefLap(bestLapNumber(laps))
-    setRefSessionId(null)
     return () => resetCursor("lap")
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session.id])
 
-  const sameTrack = useMemo(() => (sessions.data ?? []).filter((s) => s.track === session.track && s.id !== session.id), [sessions.data, session.track, session.id])
-  const pb = useMemo(() => pbSession(sessions.data?.filter((s) => s.track === session.track) ?? []), [sessions.data, session.track])
-  const refDetail = useSession(refSessionId ?? 0, mode === "session" && refSessionId != null)
-  const refLaps = mode === "session" ? (refDetail.data?.laps ?? []) : laps
-
-  const chooseMode = (m: RefMode) => {
-    setMode(m)
-    if (m === "session") {
-      const pick = pb && pb.id !== session.id ? pb.id : (sameTrack[0]?.id ?? null)
-      setRefSessionId(pick)
-      setRefLap(null) // filled once that session's laps arrive
-    } else {
-      setRefSessionId(null)
-      setRefLap(best)
-    }
-  }
-  useEffect(() => {
-    if (mode === "session" && refDetail.data && (refLap == null || !refDetail.data.laps.some((l) => l.lap === refLap))) {
-      setRefLap(bestLapNumber(refDetail.data.laps))
-    }
-  }, [mode, refDetail.data, refLap])
-
-  const crossSession = mode === "session" && refSessionId != null
   const ref = useMemo(() => {
-    if (mode === "none" || refLap == null || (mode === "session" && !refDetail.data)) return null
-    if (crossSession) return { session: refSessionId, lap: refLap }
-    return refLap === focusLap ? null : { session: null as number | null, lap: refLap }
-  }, [mode, refLap, refDetail.data, crossSession, refSessionId, focusLap])
+    if (!selection) return null
+    if (selection.session != null) return selection
+    return selection.lap === focusLap ? null : selection
+  }, [selection, focusLap])
 
   const mapColor = color === "delta" && !ref ? "speed" : color
   const map = useMap(session.id, focusLap, ref?.lap ?? null, ref?.session ?? null, mapColor)
@@ -135,30 +92,7 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
       <Panel>
         <div className="row">
           <LapSelect laps={laps} value={focusLap} onChange={setFocusLap} label="Focus lap" />
-          <label className="field">
-            Reference
-            <select value={mode} onChange={(e) => chooseMode(e.target.value as RefMode)} aria-label="Reference type">
-              <option value="none">None</option>
-              <option value="lap">Lap in this session</option>
-              <option value="session" disabled={sameTrack.length === 0}>
-                Another session
-              </option>
-            </select>
-          </label>
-          {mode === "session" && (
-            <label className="field">
-              Reference session
-              <select value={refSessionId ?? ""} onChange={(e) => { setRefSessionId(Number(e.target.value)); setRefLap(null) }} aria-label="Reference session">
-                {sameTrack.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    #{s.id} · {s.session_type || "—"} · {s.lap_count} laps · best {formatLapTime(s.best_lap_time)}
-                    {pb?.id === s.id ? " ★ PB" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {mode !== "none" && refLaps.length > 0 && <LapSelect laps={refLaps} value={refLap} onChange={setRefLap} label="Reference lap" />}
+          <ReferenceFields choice={choice} modes={["none", "lap", "session"]} />
           <label className="field">
             Map colour
             <select value={color} onChange={(e) => setColor(e.target.value as (typeof COLORS)[number])} aria-label="Map colour">

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { LapSummary, SessionMeta } from "../api/types"
-import { bestLapNumber, filterSessions, lapLabel, pbSession } from "./sessions"
+import { bestLapNumber, fastestOtherLap, filterSessions, lapLabel, pbSession } from "./sessions"
 
 const base = { sample_count: 1, car: "Mercedes", notes: "", conditions: "", lap_count: 10, best_lap: 1, original_size_bytes: 1, stored_size_bytes: 1, created_at: "", track_length: 1000 }
 const sessions: SessionMeta[] = [
@@ -41,5 +41,21 @@ describe("laps", () => {
   it("labels laps with their class unless push", () => {
     expect(lapLabel(laps[1], (s) => `${s}s`)).toBe("Lap 5 — 66.154s ★")
     expect(lapLabel(laps[0], (s) => `${s}s`)).toBe("Lap 0 — 70s (start)")
+  })
+})
+
+describe("fastestOtherLap", () => {
+  const laps = [
+    { lap: 1, lap_time: 65.0, lap_class: "out", pit_stop: false, delta_best: 0, is_best: false },
+    { lap: 2, lap_time: 66.1, lap_class: "push", pit_stop: false, delta_best: 0, is_best: true },
+    { lap: 3, lap_time: 66.4, lap_class: "push", pit_stop: false, delta_best: 0.3, is_best: false },
+  ] as LapSummary[]
+  it("picks the fastest other clean lap", () => {
+    expect(fastestOtherLap(laps, 2)).toBe(3)
+    expect(fastestOtherLap(laps, 3)).toBe(2)
+  })
+  it("falls back to any lap, then null", () => {
+    expect(fastestOtherLap(laps.slice(0, 2), 2)).toBe(1)
+    expect(fastestOtherLap(laps.slice(1, 2), 2)).toBeNull()
   })
 })

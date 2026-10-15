@@ -1,0 +1,69 @@
+.ct-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.ct-class {
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ct-delta {
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ct-delta.good,
+.ct-delta.bad {
+  font-weight: 600;
+}
+.ct-sort {
+  all: unset;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ct-sort:hover {
+  text-decoration: underline;
+}
+.ct-sort.active {
+  color: var(--accent);
+}
+.ct-loss {
+  color: var(--bad);
+  font-weight: 700;
+}
+.ct-gain {
+  color: var(--good);
+  font-weight: 700;
+}
+.ct-flat {
+  color: var(--text-dim);
+}
+.ct-callouts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ct-callouts li {
+  padding: 4px 8px;
+  border-left: 3px solid var(--border);
+  cursor: pointer;
+}
+.ct-callouts li.loss {
+  border-left-color: var(--bad);
+}
+.ct-callouts li.gain {
+  border-left-color: var(--good);
+}
+.ct-callouts li:hover {
+  background: var(--panel-2);
+}
+tr.ct-selected td {
+  background: var(--panel-2);
+}

@@ -124,6 +124,14 @@ CREATE TABLE IF NOT EXISTS track_maps (
     source_session_id INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS track_corners (
+    track TEXT PRIMARY KEY,
+    corners_json TEXT NOT NULL,
+    source_session_id INTEGER,
+    source_lap INTEGER,
+    built_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_laps_session ON laps(session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_track ON sessions(track);
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);

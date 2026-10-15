@@ -4,6 +4,8 @@ import type {
   AllocationPayload,
   ChannelsPayload,
   ComparePayload,
+  CornersPayload,
+  TrackCornersPayload,
   ImportResult,
   InventoryRow,
   LibraryStats,
@@ -49,6 +51,15 @@ export const useMap = (id: number, lap: number | null, refLap: number | null, re
     queryFn: () => api.get<MapPayload>(`/sessions/${id}/map${qs({ lap, ref_lap: refLap, ref_session: refSession, color })}`),
     enabled: lap != null,
     placeholderData: keepPreviousData,
+  })
+
+export const useCorners = (id: number, lap: number | null, refLap: number | null, refSession: number | null, enabled = true) =>
+  useQuery({
+    queryKey: ["corners", id, lap, refLap, refSession],
+    queryFn: () => api.get<CornersPayload>(`/sessions/${id}/corners${qs({ lap, ref_lap: refLap, ref_session: refSession })}`),
+    enabled: enabled && lap != null && refLap != null,
+    placeholderData: keepPreviousData,
+    retry: false,
   })
 
 export const useInventory = (id: number, enabled = true) =>
@@ -156,4 +167,10 @@ export const useSaveOverrides = () =>
 export const useClearOverrides = () =>
   useInvalidating((v: { track: string; state: string }) =>
     api.send<OverridesPayload>("DELETE", `/tracks/${encodeURIComponent(v.track)}/strategy-overrides${qs({ state: v.state })}`),
+  )
+
+/** Rebuild a track's corners from one lap; every cached analysis refetches against the new corner set. */
+export const useRebuildCorners = () =>
+  useInvalidating((v: { track: string; session: number; lap: number }) =>
+    api.send<TrackCornersPayload>("POST", `/tracks/${encodeURIComponent(v.track)}/corners/rebuild`, { session: v.session, lap: v.lap }),
   )

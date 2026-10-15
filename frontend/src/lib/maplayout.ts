@@ -1,5 +1,5 @@
 /** Fit the racing line (and the circuit outline) into a canvas; nearest-point lookup for hover. */
-import type { Num } from "../api/types"
+import type { MapPayload, Num } from "../api/types"
 
 export interface Projection {
   px: number[]
@@ -66,4 +66,25 @@ export function nearestOnScreen(px: number[], py: number[], mx: number, my: numb
     }
   }
   return best >= 0 && bestD <= radius * radius ? best : null
+}
+
+/** The part of a map payload inside a distance window (the outline is dropped so the view fits the window). */
+export function zoomMapPayload(data: MapPayload, range: [number, number]): MapPayload {
+  const idx: number[] = []
+  data.d.forEach((v, i) => {
+    if (v != null && v >= range[0] && v <= range[1]) idx.push(i)
+  })
+  if (idx.length < 2) return data
+  const pick = <T>(a: T[]) => idx.map((i) => a[i])
+  return {
+    ...data,
+    x: pick(data.x),
+    y: pick(data.y),
+    d: pick(data.d),
+    color: data.color && { ...data.color, values: pick(data.color.values) },
+    channels: data.channels.map((c) => ({ ...c, values: pick(c.values), ref: c.ref && pick(c.ref) })),
+    labels: data.labels.filter((l) => l.d >= range[0] && l.d <= range[1]),
+    spans: data.spans.filter((s) => s.to >= range[0] && s.from <= range[1]),
+    outline: null,
+  }
 }
