@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure module with the correction, noise and lap-counting rules; engineer imports it
 - [ ] Engineer scenario tests and the capture-replay engine test unchanged and green

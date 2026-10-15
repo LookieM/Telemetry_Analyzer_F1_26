@@ -52,20 +52,19 @@ import math
 import random
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 
 from telemetry import compounds
 from telemetry.setup_tweaker import SETUP_PARAMS
 
+from .lap_correction import (DEFAULT_DEG, MISTAKE_S, NOISE_FLOOR, Lap, correct_groups,  # noqa: F401
+                             mistake_limit, noise_estimate, representative_laps)
+
 PROGRAM_MIN = {"short": 18.0, "full": 50.0}
 PROGRAM_PARAMS = {"short": 1, "full": 3}
 BALANCE_FRAC, QUALI_FRAC, LONG_FRAC = 0.60, 0.15, 0.25
 TARGET_LAPS, QUALI_LAPS, MIN_LAPS = 3, 2, 2
-MISTAKE_S = 2.0
-NOISE_FLOOR = 0.10
-DEFAULT_DEG = 0.10
 LONG_RUN_LAPS = 10
 LONG_RUN_MIN = 8
 RACE_WEIGHT, QUALI_WEIGHT = 0.7, 0.3
@@ -115,41 +114,7 @@ def _build_specs() -> dict[str, _Spec]:
 SPECS = _build_specs()
 
 
-@dataclass
-class EngineerLap:
-    """One completed lap as the live engine sees it. ``setup`` is the canonical garage dict."""
-
-    lap: int
-    lap_time_s: float
-    valid: bool = True
-    in_lap: bool = False
-    out_lap: bool = False
-    pit: bool = False
-    s1: float | None = None
-    s2: float | None = None
-    s3: float | None = None
-    fuel_start: float | None = None
-    fuel_end: float | None = None
-    compound: int | None = None
-    tyre_set_idx: int | None = None
-    fresh_set: bool = False
-    tyre_age_laps: int = 0
-    wear_max_pct: float | None = None
-    setup: dict[str, float] = field(default_factory=dict)
-
-    @property
-    def fuel_mid(self) -> float | None:
-        if self.fuel_start is None or self.fuel_end is None:
-            return None
-        return (self.fuel_start + self.fuel_end) / 2.0
-
-    @property
-    def flying(self) -> bool:
-        return self.valid and not (self.in_lap or self.out_lap or self.pit) and self.lap_time_s > 0
-
-    @property
-    def sectors(self) -> list[float | None]:
-        return [self.s1, self.s2, self.s3]
+EngineerLap = Lap
 
 
 @dataclass
@@ -393,11 +358,7 @@ class Engineer:
         return f"{spec.label} is {_disp(spec, setup[k])}{spec.unit}, expected {want}"
 
     def _counted(self, pair: _Pair, v: str) -> list[EngineerLap]:
-        laps = pair.laps.get(v, [])
-        if not laps:
-            return []
-        med = float(np.median([x.lap_time_s for x in laps]))
-        return [x for x in laps if x.lap_time_s <= med + MISTAKE_S]
+        return representative_laps(pair.laps.get(v, []))
 
     def _vtext(self, pair: _Pair, v: str) -> str:
         return ", ".join(_text(SPECS[k], val) for k, val in pair.vals[v].items())
@@ -494,26 +455,11 @@ class Engineer:
     # -- analysis -----------------------------------------------------------------------------
     def _analyze(self, pair: _Pair) -> dict:
         laps = {v: self._counted(pair, v) for v in ("1", "2")}
-        allp = laps["1"] + laps["2"]
-        mids = [x.fuel_mid for x in allp if x.fuel_mid is not None]
-        ref_fuel = float(np.mean(mids)) if mids else 0.0
-        ref_age = float(np.mean([x.tyre_age_laps for x in allp]))
-
-        def fuel_fix(x: EngineerLap) -> float:
-            return self.fuel_k * (x.fuel_mid - ref_fuel) if x.fuel_mid is not None else 0.0
-
-        deg, src = self._deg(allp, fuel_fix)
-        corr: dict[str, list[float]] = {"1": [], "2": []}
-        sect: dict[str, list[list[float]]] = {"1": [], "2": []}
-        for v in ("1", "2"):
-            for x in laps[v]:
-                fix = fuel_fix(x) + deg * (x.tyre_age_laps - ref_age)
-                corr[v].append(x.lap_time_s - fix)
-                sect[v].append([(s - fix * s / x.lap_time_s) if s is not None else math.nan for s in x.sectors])
-        m = {v: float(np.mean(corr[v])) for v in corr}
+        cor = correct_groups(laps, self.fuel_k, self.deg_table)
+        corr, sect, deg, src = cor.times, cor.sectors, cor.deg_s_per_lap, cor.deg_source
+        m = cor.means
         delta = m["2"] - m["1"]
-        var = sum((float(np.std(corr[v], ddof=1)) if len(corr[v]) > 1 else 0.0) ** 2 / len(corr[v]) for v in corr)
-        noise = max(NOISE_FLOOR, math.sqrt(var))
+        noise = noise_estimate(corr)
         ratio = abs(delta) / noise
         measurable = ratio >= 1.0
         sectors = []
@@ -530,21 +476,6 @@ class Engineer:
                 else "none", "measurable": measurable, "text": text, "stopwatch_winner": winner,
                 "n": {v: len(corr[v]) for v in corr}, "means": m, "sectors": sectors, "deg_s_per_lap": deg,
                 "deg_source": src, "fuel_s_per_kg": self.fuel_k}
-
-    def _deg(self, laps: list[EngineerLap], fuel_fix) -> tuple[float, str]:
-        by_set: dict[Any, list[EngineerLap]] = {}
-        for x in laps:
-            by_set.setdefault(x.tyre_set_idx, []).append(x)
-        best = max(by_set.values(), key=len)
-        if len(best) >= 4 and len({x.tyre_age_laps for x in best}) >= 3:
-            slope = float(np.polyfit([x.tyre_age_laps for x in best], [x.lap_time_s - fuel_fix(x) for x in best], 1)[0])
-            return min(max(slope, 0.0), 0.6), "fitted"
-        comps = [x.compound for x in laps if x.compound is not None]
-        if comps:
-            c = max(set(comps), key=comps.count)
-            if c in self.deg_table:
-                return float(self.deg_table[c]), "compound"
-        return DEFAULT_DEG, "default"
 
     def _compare(self, pair: _Pair, ans: dict) -> dict:
         a = pair.analysis
@@ -821,9 +752,9 @@ class Engineer:
     def _lr_valid(self) -> list[dict]:
         if not self.lr_laps:
             return []
-        med = float(np.median([x["time_s"] for x in self.lr_laps]))
+        limit = mistake_limit([x["time_s"] for x in self.lr_laps])
         return [{**x, "time_s": _f(x["time_s"]), "corrected_s": _f(x["corrected_s"])}
-                for x in self.lr_laps if x["time_s"] <= med + MISTAKE_S]
+                for x in self.lr_laps if x["time_s"] <= limit]
 
     def _finish(self) -> None:
         if self.phase == "long_run":
