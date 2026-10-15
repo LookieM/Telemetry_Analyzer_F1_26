@@ -387,3 +387,108 @@ export interface ImportResult {
   session_id?: number
   [key: string]: unknown
 }
+
+/* ---- Live race engineer (telemetria_server/live/engineer.py `view()`) ---- */
+
+export type EngineerPhase = "idle" | "balance" | "quali" | "long_run" | "done"
+export type EngineerVariant = "1" | "2"
+export type EngineerVerdict = "1" | "2" | "same"
+export type EngineerStrength = "slight" | "clear"
+export type EngineerConfidence = "none" | "medium" | "high"
+export type EngineerRole = "baseline" | "change" | "start" | "final"
+
+export interface EngineerAnswer {
+  verdict: EngineerVerdict
+  strength: EngineerStrength
+  tags: string[]
+  note?: string | null
+}
+export interface EngineerSector {
+  sector: number
+  delta_s: number
+}
+export interface EngineerResult {
+  pair: number
+  label: string
+  variants: Record<EngineerVariant, string | number | null>
+  /** Corrected variant 2 minus variant 1; negative = variant 2 faster. */
+  delta_s: number | null
+  noise_s: number | null
+  confidence: EngineerConfidence
+  measurable: boolean
+  text: string
+  stopwatch_winner: EngineerVariant | null
+  n: Record<EngineerVariant, number>
+  sectors: EngineerSector[]
+  deg_s_per_lap: number | null
+  deg_source: string | null
+  your_answer: EngineerAnswer | null
+  agreement: "agree" | "disagree" | null
+  agreement_text: string | null
+  roles: Partial<Record<EngineerVariant, EngineerRole>> | null
+  proposed_winner: EngineerVariant | null
+}
+export interface EngineerHistoryRow {
+  n: number
+  kind: "param" | "quali" | "skipped"
+  param: string
+  label: string
+  variants?: Record<string, string | number | null> | null
+  roles?: Record<string, string> | null
+  counted?: Record<string, number> | null
+  delta_s?: number | null
+  noise_s?: number | null
+  confidence?: EngineerConfidence | null
+  your_answer?: EngineerAnswer | null
+  winner: EngineerVariant | null
+  winner_role?: string | null
+  outcome: "changed" | "kept" | "same" | "skipped"
+}
+export interface EngineerRevert {
+  key: string
+  param: string
+  label: string
+  from: string | number
+  to: string | number
+  race_s: number | null
+  quali_s: number | null
+  combined_s: number
+  text: string
+}
+export interface EngineerLongRunLap {
+  lap: number
+  time_s: number | null
+  corrected_s: number | null
+  wear_pct: number | null
+  age: number
+}
+export interface EngineerLongRun {
+  compound: number | null
+  label: string | null
+  laps: EngineerLongRunLap[]
+  target: number
+  wear_pct_per_lap: number | null
+  pace_deg_s_per_lap: number | null
+}
+export interface EngineerView {
+  phase: EngineerPhase
+  program: "short" | "full"
+  track: string | null
+  session_type: string | null
+  in_garage: boolean
+  budget: { total_s: number | null; left_s: number | null }
+  param: { key: string; label: string; unit: string; index: number; of: number } | null
+  variants: Record<EngineerVariant, string | number | null> | null
+  variant_text: Record<EngineerVariant, string> | null
+  instruction: string | null
+  run: { variant: EngineerVariant | null; counted: Record<EngineerVariant, number>; target: number; lap: number }
+  detected: { variant: EngineerVariant | null; warning: string | null }
+  tyre_hint: string | null
+  question: { pending: boolean; awaiting_confirm: boolean; proposed: EngineerVariant | null; tags: string[] }
+  last_result: EngineerResult | null
+  history: EngineerHistoryRow[]
+  settled: Record<string, { label: string; value: string | number; new: boolean }>
+  revert_proposal: EngineerRevert | null
+  long_run: EngineerLongRun | null
+  feed: { t: number; text: string }[]
+}

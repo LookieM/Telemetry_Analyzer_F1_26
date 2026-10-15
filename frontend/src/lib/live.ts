@@ -1,5 +1,6 @@
 /** Live view: message types, delta trace buffer and the WebSocket hook. */
 import { useEffect, useRef, useState } from "react"
+import type { EngineerView } from "../api/types"
 
 export type WheelStatus = "cold" | "ok" | "hot"
 export interface LiveWheel {
@@ -54,6 +55,7 @@ export interface LiveStrategy {
   box_under_sc_s?: number | null
   laps_left?: number
   updated_lap?: number
+  pit_loss_s?: number
   sc?: number
 }
 export interface LiveSnapshot {
@@ -74,6 +76,7 @@ export interface LiveSnapshot {
     game_pit_window: [number, number] | null
     pit_status: number
     penalties_s: number
+    time_left_s?: number
   }
   timing: {
     lap_time: number
@@ -96,11 +99,13 @@ export interface LiveSnapshot {
     wheels: Record<"FL" | "FR" | "RL" | "RR", LiveWheel>
     targets: { surface: [number, number]; inner: [number, number] }
   }
-  fuel: { kg: number; capacity: number; per_lap: number | null; laps_left: number | null; margin_laps: number | null; game_laps_left: number }
+  fuel: { kg: number; capacity: number; per_lap: number | null; laps_left: number | null; margin_laps: number | null; game_laps_left: number; mix?: number }
   ers: { store_mj: number; mode: number; deployed_mj: number; harvested_mj: number; harvest_limit_mj: number; overtake: boolean | null; overtake_available: boolean | null; active_aero: number | null }
   damage: LiveDamage | null
   rivals: LiveRival[]
   strategy: LiveStrategy | null
+  /** Race engineer view; null/absent while no program runs. */
+  engineer?: EngineerView | null
 }
 export interface LiveStatus {
   type: "status"
@@ -166,16 +171,21 @@ export function useLive(): LiveData {
         if (!stopped) timer = window.setTimeout(connect, 1500)
       }
       ws.onmessage = (ev) => {
-        const m = JSON.parse(ev.data)
+        let m: { type?: string }
+        try {
+          m = JSON.parse(ev.data)
+        } catch {
+          return
+        }
         if (m.type === "snapshot") {
-          const s = m as LiveSnapshot
+          const s = m as unknown as LiveSnapshot
           trace.current = pushDelta(trace.current, s.timing.lap_distance, s.timing.delta_best)
           traceLast.current = pushDelta(traceLast.current, s.timing.lap_distance, s.timing.delta_last)
           setData((d) => ({ ...d, snapshot: s, deltaTrace: trace.current, lastTrace: traceLast.current, lastAt: Date.now() }))
         } else if (m.type === "status") {
-          setData((d) => ({ ...d, status: m as LiveStatus }))
+          setData((d) => ({ ...d, status: m as unknown as LiveStatus }))
         } else if (m.type === "event") {
-          setData((d) => ({ ...d, events: [m as LiveEvent, ...d.events].slice(0, 4) }))
+          setData((d) => ({ ...d, events: [m as unknown as LiveEvent, ...d.events].slice(0, 4) }))
         }
       }
     }
@@ -183,7 +193,10 @@ export function useLive(): LiveData {
     return () => {
       stopped = true
       window.clearTimeout(timer)
-      ws?.close()
+      if (ws) {
+        ws.onopen = ws.onclose = ws.onmessage = null
+        ws.close()
+      }
     }
   }, [])
   return data

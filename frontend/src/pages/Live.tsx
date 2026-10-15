@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react"
 import { Link } from "react-router-dom"
+import { EngineerCard } from "../components/EngineerCard"
 import { formatLapTime, fmt, fmtSigned } from "../lib/format"
 import { ERS_MODES, compoundColor, gapLabel, useLive } from "../lib/live"
 import type { LiveDamage, LiveRival, LiveSnapshot, LiveStrategy, LiveWheel } from "../lib/live"
@@ -367,6 +368,8 @@ export function LivePage() {
           <DamageCard d={s.damage} />
 
           <StrategyCard s={s.strategy} session={s.session} damage={s.damage} />
+
+          <EngineerCard view={s.engineer} />
 
           <section className="lv-card lv-rivalcard">
             <Rivals rows={s.rivals} />

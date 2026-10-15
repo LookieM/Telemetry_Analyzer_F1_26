@@ -112,7 +112,7 @@
 .lv-strat-grid b { font-size: 1.15em; font-family: var(--font-mono); }
 
 /* rivals */
-.lv-rivalcard { flex: 1 1 10em; overflow: hidden; padding: 0.3em 0.5em; }
+.lv-rivalcard { flex: 1 1 6em; overflow: hidden; padding: 0.3em 0.5em; }
 .lv-rivals { width: 100%; border-collapse: collapse; font-size: 1.2em; }
 .lv-rivals th { text-align: left; color: var(--text-dim); font-size: 0.7em; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.2em 0.4em; }
 .lv-rivals td { padding: 0.45em 0.4em; border-top: 1px solid var(--border); white-space: nowrap; }

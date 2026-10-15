@@ -1,4 +1,5 @@
 /** Thin fetch wrapper: JSON in / out, errors carry the server's `detail`. */
+import type { EngineerAnswer, EngineerView } from "./types"
 
 export class ApiError extends Error {
   constructor(
@@ -40,4 +41,15 @@ export const api = {
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
   upload: <T>(path: string, form: FormData) => request<T>(`/api${path}`, { method: "POST", body: form }),
+}
+
+/** Live race engineer commands; each returns the new engineer view (409 = refused, `detail` is the reason). */
+export const engineerApi = {
+  start: (program: "short" | "full", minutes?: number) => api.send<EngineerView>("POST", "/live/engineer/start", minutes ? { program, minutes } : { program }),
+  answer: (a: EngineerAnswer) => api.send<EngineerView>("POST", "/live/engineer/answer", a),
+  confirm: (winner: "1" | "2") => api.send<EngineerView>("POST", "/live/engineer/confirm", { winner }),
+  revert: (accept: boolean) => api.send<EngineerView>("POST", "/live/engineer/revert", { accept }),
+  skip: () => api.send<EngineerView>("POST", "/live/engineer/skip"),
+  nextPhase: () => api.send<EngineerView>("POST", "/live/engineer/next-phase"),
+  stop: () => api.send<EngineerView>("POST", "/live/engineer/stop"),
 }

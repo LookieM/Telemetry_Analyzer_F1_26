@@ -1,0 +1,73 @@
+/* Engineer card on the Live page: sizes in em of the page's --u so it scales with the portrait monitor. */
+.eg-card { display: flex; flex-direction: column; gap: 0.5em; flex: 0 0 auto; max-height: 36em; overflow-y: auto; }
+.eg-card .dim { color: var(--text-dim); }
+.eg-head { display: flex; align-items: baseline; gap: 0.7em; }
+.eg-head h3 { margin: 0; }
+.eg-phase { font-weight: 700; padding: 0.05em 0.6em; border-radius: 0.3em; background: var(--info); color: #fff; font-size: 0.85em; }
+.eg-param { font-size: 1em; font-weight: 600; }
+.eg-budget { font-family: var(--font-mono); font-size: 1.2em; font-weight: 700; }
+
+.eg-instruction { font-size: 1.7em; font-weight: 700; line-height: 1.15; }
+.eg-progress { font-size: 1.15em; }
+.eg-progress b { font-family: var(--font-mono); }
+.eg-hint { color: var(--text-dim); font-size: 0.9em; }
+.eg-warn { background: rgba(232, 163, 23, 0.16); border: 1px solid var(--warn); color: var(--warn); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
+.eg-error { background: rgba(215, 38, 61, 0.16); border: 1px solid var(--bad); color: var(--bad); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
+
+.eg-variants { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; }
+.eg-var { display: flex; align-items: center; gap: 0.5em; padding: 0.35em 0.6em; border: 2px solid var(--border); border-radius: 0.4em; background: var(--panel-2); min-width: 0; }
+.eg-var.now { border-color: var(--good); }
+.eg-var-n { font-size: 1.6em; font-weight: 800; font-family: var(--font-mono); }
+.eg-var-t { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-var-c { font-family: var(--font-mono); color: var(--text-dim); }
+
+/* buttons: big touch/click targets */
+.eg-verdict { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5em; }
+.eg-verdict.two { grid-template-columns: 1fr 1fr; }
+.eg-big { font: inherit; font-size: 1.9em; font-weight: 800; padding: 0.35em 0.2em; border-radius: 0.35em; border: 2px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 0.1em; min-width: 0; }
+.eg-big small { font-size: 0.42em; font-weight: 600; color: var(--text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-big.on { border-color: var(--accent); background: rgba(224, 60, 49, 0.2); }
+.eg-big:disabled { opacity: 0.5; cursor: default; }
+.eg-strength { display: flex; gap: 0.5em; align-items: center; }
+.eg-seg { font: inherit; font-size: 1.15em; font-weight: 700; padding: 0.3em 1.1em; border-radius: 0.35em; border: 2px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.eg-seg.on { border-color: var(--info); background: rgba(62, 124, 201, 0.25); }
+.eg-count { margin-left: auto; font-family: var(--font-mono); }
+.eg-tags { display: flex; flex-wrap: wrap; gap: 0.4em; }
+.eg-tag { font: inherit; font-size: 0.95em; padding: 0.3em 0.7em; border-radius: 1.2em; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.eg-tag.on { border-color: var(--good); background: rgba(46, 158, 68, 0.22); font-weight: 700; }
+.eg-tag:disabled { opacity: 0.4; cursor: default; }
+.eg-submit { display: flex; gap: 0.5em; }
+.eg-note { flex: 1; min-width: 0; font: inherit; font-size: 1em; padding: 0.4em 0.6em; border-radius: 0.35em; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.eg-go { font: inherit; font-size: 1.3em; font-weight: 800; padding: 0.2em 1.3em; border-radius: 0.35em; border: 2px solid var(--good); background: var(--good); color: #fff; cursor: pointer; }
+.eg-go:disabled { opacity: 0.4; cursor: default; }
+.eg-q-title { font-size: 1.25em; font-weight: 700; }
+.eg-revert p { margin: 0.3em 0 0.5em; }
+
+/* result */
+.eg-result { display: flex; flex-direction: column; gap: 0.3em; padding: 0.4em 0.6em; border-radius: 0.4em; background: var(--panel-2); border-left: 4px solid var(--border); }
+.eg-sw { display: flex; flex-direction: column; }
+.eg-sw b { font-size: 1.15em; }
+.eg-sw.v1 { color: var(--text); }
+.eg-sectors { display: flex; gap: 0.9em; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.95em; }
+.eg-sectors .fast b { color: var(--good); }
+.eg-sectors .slow b { color: var(--bad); }
+.eg-agree.agree { color: var(--good); font-weight: 600; }
+.eg-agree.disagree { color: var(--warn); font-weight: 700; }
+.eg-roles { font-size: 0.9em; }
+
+/* long run */
+.eg-laps { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.95em; }
+.eg-laps th { text-align: left; color: var(--text-dim); font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.06em; }
+.eg-laps td, .eg-laps th { padding: 0.12em 0.4em; border-top: 1px solid var(--border); }
+
+/* feed + history + controls */
+.eg-feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1em; font-size: 0.9em; color: var(--text-dim); }
+.eg-feed li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-feed li.new { color: var(--text); font-weight: 600; }
+.eg-history { font-size: 0.9em; }
+.eg-history summary { cursor: pointer; }
+.eg-history ul { margin: 0.3em 0 0; padding-left: 1.2em; }
+.eg-controls { display: flex; gap: 0.5em; align-items: center; }
+.eg-ctl { font: inherit; font-size: 1em; font-weight: 700; padding: 0.35em 1em; border-radius: 0.35em; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.eg-ctl.stop { border-color: var(--bad); color: var(--bad); }
+.eg-ctl:disabled { opacity: 0.5; cursor: default; }
