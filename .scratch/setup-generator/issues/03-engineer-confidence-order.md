@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Engineer start reads the baseline source/confidence and reorders parameters
 - [ ] Engineer scenario test; existing tests green

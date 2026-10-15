@@ -245,6 +245,16 @@ def test_settled_params_are_skipped_and_full_program_tests_three():
     assert any("Settled earlier" in f["text"] for f in v["feed"])
 
 
+def test_generator_confidence_reorders_the_parameters():
+    base = dict(BASE, arb_setup_1=5.0)
+    e = make(baseline=base, param_confidence={"arb_setup_0": "low", "wing_setup_0": "high", "wing_setup_1": "high"})
+    assert e.view()["param"]["label"] == "Front anti-roll bar"
+    assert any("Front anti-roll bar: lowest confidence" in f["text"] for f in e.view()["feed"])
+    e = make(program="full", baseline=base, param_confidence={"arb_setup_1": "medium", "wing_setup_0": "high"})
+    assert e.params == ["arb_setup_1", "wing_setup_0", "wing_setup_1"]
+    assert make().params == ["wing_setup_0"]
+
+
 def test_skip_moves_to_the_next_parameter():
     e = make(program="full")
     e.skip()

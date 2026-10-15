@@ -11,6 +11,11 @@ hidden until you answered). Laps count when valid, not in/out/pit, matching the 
 > 2 s slower than the variant's median. Lap times are corrected for fuel and tyre age; verdict = corrected
 mean difference vs a noise estimate (floor 0.10 s).
 
+Parameter order: ``PARAM_ORDER``, unless ``start(param_confidence=...)`` is given (the engine passes the stored
+per-parameter confidence when the track's active baseline came from the setup generator): then it is a stable
+sort by confidence (low < medium < high, missing = high), default order as tie-break, and the first feed line
+names the parameter tested first. Settled parameters are skipped either way.
+
 ``view()`` JSON shape (``null`` is the snapshot value while the phase is idle)::
 
     phase        "idle" | "balance" | "quali" | "long_run" | "done"
@@ -96,6 +101,14 @@ FIRST_GAP = {"wing_setup_0": 3, "wing_setup_1": 3, "diff_onThrottle_setup": 0.10
 _LABELS = {"susp_height_setup_0": "Front ride height", "susp_height_setup_2": "Rear ride height",
            "brake_bias_setup": "Brake bias"}
 _UNITS = {"brake_bias_setup": "%"}
+
+
+_CONF_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _confidence_order(conf: dict[str, str]) -> tuple[str, ...]:
+    """PARAM_ORDER stably sorted by confidence (low first); keys without a value count as high."""
+    return tuple(sorted(PARAM_ORDER, key=lambda k: _CONF_RANK.get(conf.get(k), 2)))
 
 
 class EngineerError(Exception):
@@ -248,7 +261,7 @@ class Engineer:
     def start(self, program: str, baseline: dict, track: str, session_type: str, wet: bool, now_s: float,
               minutes: float | None = None, session_left_s: float | None = None,
               settled: dict[str, float] | None = None, fuel_s_per_kg: float = 0.03,
-              deg_s_per_lap: dict[int, float] | None = None) -> dict:
+              deg_s_per_lap: dict[int, float] | None = None, param_confidence: dict[str, str] | None = None) -> dict:
         if program not in PROGRAM_MIN:
             raise EngineerError("Program must be 'short' or 'full'")
         if self.active:
@@ -277,10 +290,15 @@ class Engineer:
                     self._say(f"Settled earlier on this track: {_text(SPECS[k], v)} (set it before the first run)")
                 self.work[k] = v
         self.start_setup.update(self.work)
-        self.params = [k for k in PARAM_ORDER if k in self.work and k not in self.settled_prev][:PROGRAM_PARAMS[program]]
+        order = _confidence_order(param_confidence) if param_confidence else PARAM_ORDER
+        self.params = [k for k in order if k in self.work and k not in self.settled_prev][:PROGRAM_PARAMS[program]]
         self._update_soft()
         self.phase = "balance"
         self._say(f"Engineer on: {program} program, {self.total_s / 60:.0f} min. Balance test first.")
+        if param_confidence and order != PARAM_ORDER:
+            lead = next((k for k in order if k in self.work and k not in self.settled_prev), None)
+            if lead is not None and lead != PARAM_ORDER[0]:
+                self._say(f"Starting with {SPECS[lead].label}: lowest confidence in the generated setup.")
         self._next_param()
         self._refresh()
         return self.view()

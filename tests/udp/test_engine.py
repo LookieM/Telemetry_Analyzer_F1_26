@@ -187,3 +187,38 @@ def test_a_failing_recorder_never_breaks_the_engine(tmp_path):
     assert e._lap_profile(3) is None
     e.recorder_source = lambda: None
     assert e._lap_profile(3) is None
+
+
+def _engineer_params_for_baseline(tmp_path, source, meta):
+    """Replay a race as FP1 on a tmp library with an active baseline of ``source``; returns the engineer's params."""
+    import numpy as np
+
+    from telemetria_server.live.state import PID_SESSION
+    from telemetria_server.udp import srt_columns as cols
+    from telemetry import duel_store
+
+    (tmp_path / "data").mkdir(parents=True)
+    s = LiveState()
+    e = LiveEngine(s, tmp_path)
+    for i, (t, d) in enumerate(iter_capture(CAP)):
+        s.feed(d, t)
+        if i % 120 or i < 3000 or s.get(PID_SESSION) is None:
+            continue
+        sess = np.array([s.pk[PID_SESSION]])
+        sess[0]["m_sessionType"], sess[0]["m_weather"] = 1, 0
+        s.pk[PID_SESSION] = sess[0]
+        e.tick()
+        track = cols.track_name(int(sess[0]["m_trackId"]))
+        duel_store.set_baseline(track, {"wing_setup_0": 25.0}, source=source, name="t", meta=meta, app_root=tmp_path)
+        e.engineer_start("full")
+        return list(e.engineer.params)
+    raise AssertionError("no session in the capture")
+
+
+def test_engine_reorders_the_engineer_for_an_active_generator_baseline(tmp_path):
+    from telemetria_server.live.engineer import PARAM_ORDER
+    meta = {"confidence": {"arb_setup_0": "low", "wing_setup_0": "high", "wing_setup_1": "high"}}
+    gen = _engineer_params_for_baseline(tmp_path / "a", "generator", meta)
+    assert gen[0] == "arb_setup_0"
+    other = _engineer_params_for_baseline(tmp_path / "b", "manual", meta)
+    assert other == [k for k in PARAM_ORDER if k in other] and other[0] == PARAM_ORDER[0]

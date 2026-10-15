@@ -518,6 +518,21 @@ class LiveEngine:
             log.exception("engineer: no fuel / degradation model for %s", track)
         return fuel_k, deg
 
+    def _generator_confidence(self, track: str) -> dict[str, str] | None:
+        """Per-parameter confidence of the track's ACTIVE baseline when it came from the generator, else None."""
+        if self.root is None:
+            return None
+        try:
+            from telemetry import duel_store
+            active = duel_store.get_baselines(normalize_track_name(track) or track, self.root)["active"]
+            if not active or active.get("source") != "generator":
+                return None
+            conf = (active.get("meta") or {}).get("confidence")
+            return {str(k): str(v) for k, v in conf.items()} if isinstance(conf, dict) and conf else None
+        except Exception:
+            log.exception("engineer: could not read the generated baseline confidence for %s", track)
+            return None
+
     def engineer_start(self, program: str, minutes: float | None = None) -> dict:
         s = self.s
         sess, lapd, stat = s.get(PID_SESSION), s.get(PID_LAP), s.get(PID_STATUS)
@@ -530,12 +545,14 @@ class LiveEngine:
         baseline = self._player_setup()
         settled = engineer_log.settled_for(track, self.root) if self.root is not None else {}
         fuel_k, deg = self.engineer_models(track)
+        confidence = self._generator_confidence(track)
         with self._eng_lock:
             if self.duel.active:
                 raise EngineerError("A setup duel is running: stop it first")
             self.engineer.on_tyre_sets(self._tyre_sets())
             view = self.engineer.start(program, baseline, track, stype, wet, s.last_t, minutes,
-                                       int(sess["m_sessionTimeLeft"]) or None, settled, fuel_k, deg)
+                                       int(sess["m_sessionTimeLeft"]) or None, settled, fuel_k, deg,
+                                       confidence)
             self._eng_saved = False
             self._eng_pump()
         return view
