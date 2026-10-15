@@ -29,6 +29,7 @@ function corner(id: number, start: number, end: number, delta: Partial<CornerMet
     delta: metrics(delta),
     phases: { entry: [start, start + 50], mid: [start + 50, start + 80], exit: [start + 80, end] },
     callouts: [],
+    balance: null,
   }
 }
 
@@ -47,6 +48,11 @@ const payload: CornersPayload = {
   sum_corner_delta: 0.05,
   straights_delta: 0.15,
   start_delta: 0,
+  balance_available: false,
+  balance_reason: "no slip",
+  balance_baseline: { entry: 2, mid: 3, exit: 0.2 },
+  balance_summary: null,
+  lockups: [],
 }
 
 describe("buildCornerRows", () => {

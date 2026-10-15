@@ -100,3 +100,43 @@ def test_channel_inventory(client, race_id):
     assert rows and {"Group", "Channel", "Unit", "Columns"} <= set(rows[0])
     assert any(r["Channel"] == "Speed" and r["Columns"] == "speed" for r in rows)
     assert client.get("/api/sessions/999999/channels/inventory").status_code == 404
+
+
+def test_lap_extras_availability(client, race_id):
+    rows = {r["key"]: r for r in client.get(f"/api/sessions/{race_id}/lap-extras").json()}
+    # this race is a compact export: g_lat is recorded but all-NaN, no slip channels
+    assert not rows["g_lat"]["available"] and "empty" in rows["g_lat"]["reason"]
+    assert rows["tyre_surface"]["available"] and rows["tyre_surface"]["channels"] == [f"tyre_surface_{w}" for w in ("FL", "FR", "RL", "RR")]
+    assert not rows["slip_angle"]["available"] and "Not recorded" in rows["slip_angle"]["reason"]
+
+
+def test_channels_extras_are_wheel_labelled(client, race_id, laps):
+    lap = _clean_laps(laps)[0]
+    body = client.get(f"/api/sessions/{race_id}/laps/{lap}/channels", params={"channels": "speed", "extras": "g_lat,tyre_surface"}).json()
+    assert {"speed", "g_lat", "tyre_surface_FL", "tyre_surface_FR", "tyre_surface_RL", "tyre_surface_RR"} <= set(body["channels"])
+    assert body["units"]["g_lat"] == "g" and body["units"]["tyre_surface_FL"] == "°C"
+    only = client.get(f"/api/sessions/{race_id}/laps/{lap}/channels", params={"channels": "", "extras": "g_long"})
+    assert only.status_code == 200 and list(only.json()["channels"]) == ["g_long"]
+    assert client.get(f"/api/sessions/{race_id}/laps/{lap}/channels", params={"extras": "nope"}).status_code == 400
+
+
+def test_compare_extras_return_focus_and_reference(client, race_id, laps):
+    push = _clean_laps(laps)
+    body = client.get(f"/api/sessions/{race_id}/compare", params={"lap": push[0], "ref_lap": push[1], "extras": "g_lat,tyre_surface"}).json()
+    n = len(body["lap_distance"])
+    for key in ("cmp_g_lat", "ref_g_lat", "cmp_tyre_surface_FL", "ref_tyre_surface_RR"):
+        assert len(body[key]) == n
+    plain = client.get(f"/api/sessions/{race_id}/compare", params={"lap": push[0], "ref_lap": push[1]}).json()
+    assert "cmp_g_lat" not in plain
+    assert client.get(f"/api/sessions/{race_id}/compare", params={"lap": push[0], "ref_lap": push[1], "extras": "nope"}).status_code == 400
+
+
+def test_map_spans_come_from_stored_track_corners(client, race_id, laps):
+    from telemetry import corner_store
+
+    push = _clean_laps(laps)
+    body = client.get(f"/api/sessions/{race_id}/map", params={"lap": push[0]}).json()
+    stored = client.get("/api/tracks/Bahrain/corners").json()["corners"]
+    assert [s["name"] for s in body["spans"]] == [c["name"] for c in stored]
+    assert body["spans"][0]["from"] == pytest.approx(stored[0]["start_m"])
+    assert [l["text"] for l in body["labels"]] == [c["name"] for c in stored]

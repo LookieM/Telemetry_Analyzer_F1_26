@@ -4,10 +4,12 @@ import type {
   AllocationPayload,
   ChannelsPayload,
   ComparePayload,
+  BalancePayload,
   CornersPayload,
   TrackCornersPayload,
   ImportResult,
   InventoryRow,
+  LapExtra,
   LibraryStats,
   MapPayload,
   OptimisePayload,
@@ -29,18 +31,18 @@ export const useSessions = () => useQuery({ queryKey: ["sessions"], queryFn: () 
 export const useSession = (id: number, enabled = true) =>
   useQuery({ queryKey: ["session", id], queryFn: () => api.get<SessionDetail>(`/sessions/${id}`), enabled: enabled && Number.isFinite(id) && id > 0 })
 
-export const useLapChannels = (id: number, lap: number | null, channels: string[] | null, enabled = true) =>
+export const useLapChannels = (id: number, lap: number | null, channels: string[] | null, enabled = true, extras: string[] = []) =>
   useQuery({
-    queryKey: ["channels", id, lap, channels?.join(",") ?? ""],
-    queryFn: () => api.get<ChannelsPayload>(`/sessions/${id}/laps/${lap}/channels${qs({ channels: channels?.join(",") })}`),
+    queryKey: ["channels", id, lap, channels?.join(",") ?? "", extras.join(",")],
+    queryFn: () => api.get<ChannelsPayload>(`/sessions/${id}/laps/${lap}/channels${qs({ channels: channels?.join(","), extras: extras.join(",") || undefined })}`),
     enabled: enabled && lap != null,
     placeholderData: keepPreviousData,
   })
 
-export const useCompare = (id: number, lap: number | null, refLap: number | null, refSession: number | null, enabled = true) =>
+export const useCompare = (id: number, lap: number | null, refLap: number | null, refSession: number | null, enabled = true, extras: string[] = []) =>
   useQuery({
-    queryKey: ["compare", id, lap, refLap, refSession],
-    queryFn: () => api.get<ComparePayload>(`/sessions/${id}/compare${qs({ lap, ref_lap: refLap, ref_session: refSession })}`),
+    queryKey: ["compare", id, lap, refLap, refSession, extras.join(",")],
+    queryFn: () => api.get<ComparePayload>(`/sessions/${id}/compare${qs({ lap, ref_lap: refLap, ref_session: refSession, extras: extras.join(",") || undefined })}`),
     enabled: enabled && lap != null && refLap != null,
     placeholderData: keepPreviousData,
   })
@@ -60,6 +62,22 @@ export const useCorners = (id: number, lap: number | null, refLap: number | null
     enabled: enabled && lap != null && refLap != null,
     placeholderData: keepPreviousData,
     retry: false,
+  })
+
+/** Balance per corner and phase as the median over the session's clean laps. */
+export const useBalance = (id: number, enabled = true) =>
+  useQuery({
+    queryKey: ["balance", id],
+    queryFn: () => api.get<BalancePayload>(`/sessions/${id}/balance`),
+    enabled: enabled && Number.isFinite(id) && id > 0,
+    retry: false,
+  })
+
+export const useLapExtras = (id: number) =>
+  useQuery({
+    queryKey: ["lap-extras", id],
+    queryFn: () => api.get<LapExtra[]>(`/sessions/${id}/lap-extras`),
+    staleTime: Infinity,
   })
 
 export const useInventory = (id: number, enabled = true) =>

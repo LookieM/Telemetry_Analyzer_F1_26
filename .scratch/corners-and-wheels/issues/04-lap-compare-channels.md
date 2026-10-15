@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Compare and lap-channel endpoints accept and return the new channels (per-wheel ones wheel-labelled); API tests
 - [ ] Laps tab channel picker adds panes; sessions missing a channel show it disabled with a reason

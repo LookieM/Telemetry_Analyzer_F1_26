@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { useCompare, useLapChannels, useMap } from "../api/hooks"
+import { useCompare, useLapChannels, useLapExtras, useMap } from "../api/hooks"
 import type { LapSummary, SectorDelta, SessionDetail } from "../api/types"
 import { LapSelect, ReferenceFields, useReference } from "../components/ReferencePicker"
 import { TraceChart } from "../components/TraceChart"
@@ -9,6 +9,7 @@ import { selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned, formatLapTime } from "../lib/format"
 import { bestLapNumber } from "../lib/sessions"
 import { compareTrace, cornerBands, driverTrace, TRACE_CHANNELS } from "../lib/traces"
+import { loadExtras, saveExtras, usableExtras } from "../lib/extras"
 
 const COLORS = ["speed", "throttle", "brake", "gear", "delta"] as const
 
@@ -52,8 +53,16 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
 
   const mapColor = color === "delta" && !ref ? "speed" : color
   const map = useMap(session.id, focusLap, ref?.lap ?? null, ref?.session ?? null, mapColor)
-  const cmp = useCompare(session.id, focusLap, ref?.lap ?? null, ref?.session ?? null, !!ref)
-  const single = useLapChannels(session.id, focusLap, TRACE_CHANNELS, !ref)
+  const extrasInfo = useLapExtras(session.id)
+  const [picked, setPicked] = useState<string[]>(loadExtras)
+  const extras = useMemo(() => usableExtras(picked, extrasInfo.data), [picked, extrasInfo.data])
+  const togglePicked = (key: string) => {
+    const next = picked.includes(key) ? picked.filter((k) => k !== key) : [...picked, key]
+    setPicked(next)
+    saveExtras(next)
+  }
+  const cmp = useCompare(session.id, focusLap, ref?.lap ?? null, ref?.session ?? null, !!ref, extras)
+  const single = useLapChannels(session.id, focusLap, TRACE_CHANNELS, !ref, extras)
 
   const labels = useMemo(() => ({ cmp: `L${focusLap}`, ref: ref ? (ref.session ? `S${ref.session} L${ref.lap}` : `L${ref.lap}`) : "Ref" }), [focusLap, ref])
   // Keyed by content so a map refetch (e.g. new colour) does not rebuild the traces and lose the zoom.
@@ -63,11 +72,11 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
   const traceData = useMemo(() => {
     if (ref) {
       if (!cmp.data) return null
-      return { ...compareTrace(cmp.data, labels, 115), bands }
+      return { ...compareTrace(cmp.data, labels, 115, extras), bands }
     }
     if (!single.data) return null
-    return { ...driverTrace(single.data, labels, 115), bands }
-  }, [ref, cmp.data, single.data, labels, bands])
+    return { ...driverTrace(single.data, labels, 115, extras), bands }
+  }, [ref, cmp.data, single.data, labels, bands, extras])
 
   const focus = laps.find((l) => l.lap === focusLap)
   const cursorX = cursor.hoverX ?? cursor.pinnedX
@@ -104,6 +113,18 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
             </select>
           </label>
         </div>
+        {extrasInfo.data && (
+          <div className="row" role="group" aria-label="Extra channels" data-testid="extras-picker">
+            <span className="note">Extra panes</span>
+            {extrasInfo.data.map((e) => (
+              <label key={e.key} className="field" title={e.available ? undefined : (e.reason ?? "Not available")} style={{ flexDirection: "row", gap: 4, alignItems: "center", opacity: e.available ? 1 : 0.5 }}>
+                <input type="checkbox" checked={e.available && picked.includes(e.key)} disabled={!e.available} onChange={() => togglePicked(e.key)} />
+                {e.label}
+                {!e.available && <span className="note"> ({e.reason})</span>}
+              </label>
+            ))}
+          </div>
+        )}
         {mode === "lap" && !ref && <p className="note">Pick a different reference lap to see deltas and overlays.</p>}
       </Panel>
 

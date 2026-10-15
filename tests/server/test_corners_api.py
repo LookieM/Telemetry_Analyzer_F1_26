@@ -91,3 +91,51 @@ def test_rebuild_error_paths(client, lib_root, race_id):
 
 def test_track_without_any_session_has_no_corners(empty_client):
     assert empty_client.get("/api/tracks/Bahrain/corners").status_code == 404
+
+
+# ------------------------------------------------------------------ balance
+
+
+@pytest.fixture
+def full_export_id(lib_root) -> int:
+    """The Austria race (full export with slip channels) copied into the tmp library."""
+    return _add_other_track(lib_root)
+
+
+def test_compact_import_says_why_it_has_no_balance(client, race_id, laps):
+    body = client.get(f"/api/sessions/{race_id}/corners", params={"lap": laps[1], "ref_lap": laps[0]}).json()
+    assert body["balance_available"] is False and "slip" in body["balance_reason"]
+    assert body["balance_summary"] is None and body["lockups"] == []
+    assert all(c["balance"] is None for c in body["corners"])
+    bal = client.get(f"/api/sessions/{race_id}/balance").json()
+    assert bal["balance_available"] is False
+    assert bal["balance_reason"] and bal["corners"] == [] and bal["laps"] == 0
+
+
+def test_corners_rows_carry_balance_on_a_full_export(client, full_export_id):
+    body = client.get(f"/api/sessions/{full_export_id}/corners").json()
+    assert body["balance_available"] is True and body["balance_reason"] is None
+    assert set(body["balance_baseline"]) == {"entry", "mid", "exit"}
+    assert isinstance(body["balance_summary"], str) and body["balance_summary"]
+    for c in body["corners"]:
+        assert set(c["balance"]) == {"entry", "mid", "exit", "traction", "lockups"}
+    assert any(c["balance"]["mid"] is not None for c in body["corners"])
+    for lock in body["lockups"]:
+        assert set(lock) >= {"wheel", "distance_m", "length_m", "corner"}
+        assert lock["wheel"] in ("FL", "FR", "RL", "RR")
+
+
+def test_balance_endpoint_is_the_median_over_clean_laps(client, full_export_id):
+    body = client.get(f"/api/sessions/{full_export_id}/balance").json()
+    assert body["track"] == "Spielberg" and body["balance_available"] is True
+    assert body["laps"] >= 3 and len(body["lap_numbers"]) == body["laps"]
+    corners = client.get("/api/tracks/Spielberg/corners").json()["corners"]
+    assert [c["id"] for c in body["corners"]] == [c["id"] for c in corners]
+    row = body["corners"][0]
+    assert set(row) >= {"id", "name", "speed_class", "entry", "mid", "exit", "traction", "lockups"}
+    assert all("lap" in lock for lock in body["lockups"])
+
+
+def test_balance_error_paths(client):
+    assert client.get("/api/sessions/99999/balance").status_code == 404
+    assert client.get("/api/sessions/x/balance").status_code == 422

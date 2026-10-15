@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { ApiError } from "../api/client"
-import { useCompare, useCorners, useMap, useRebuildCorners } from "../api/hooks"
+import { useBalance, useCompare, useCorners, useMap, useRebuildCorners } from "../api/hooks"
 import type { SessionDetail } from "../api/types"
+import { BalanceStrip } from "../components/BalanceStrip"
 import { LapSelect, ReferenceFields, useReference } from "../components/ReferencePicker"
 import { TraceChart } from "../components/TraceChart"
 import { TrackMap, type MapMark } from "../components/TrackMap"
 import { DataTable, ErrorBox, Loading, Metric, MetricRow, Panel, type Column } from "../components/ui"
+import { balanceUnavailable, buildBalanceColumns } from "../lib/balance"
 import { biggestLoss, buildCornerRows, cornerAt, cornerMarkers, lossKind, sortRows, zoomRange, type CornerRow, type SortDir, type SortKey } from "../lib/corners"
 import { selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned } from "../lib/format"
@@ -52,6 +54,7 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
   const cursor = useCursorStore(selectGroup(SYNC))
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "order", dir: "asc" })
   const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [balanceView, setBalanceView] = useState<"lap" | "session">("lap")
 
   useEffect(() => {
     resetCursor(SYNC)
@@ -75,6 +78,7 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
   const cmp = useCompare(session.id, focusLap, refLap, refSession, !!selection)
   const map = useMap(session.id, focusLap, refLap, refSession, "speed")
   const rebuild = useRebuildCorners()
+  const sessionBalance = useBalance(session.id, balanceView === "session")
 
   const rows = useMemo(() => (corners.data ? buildCornerRows(corners.data) : []), [corners.data])
   const shown = useMemo(() => sortRows(rows, sort.key, sort.dir), [rows, sort])
@@ -130,6 +134,13 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
   const cursorX = cursor.hoverX ?? cursor.pinnedX
   const cornerHere = cornerAt(rows, cursorX)
   const data = corners.data
+  const balanceBase = data?.balance_baseline
+  const shownBalance = balanceView === "session" ? sessionBalance.data : data
+  const balanceColumns = useMemo(() => {
+    if (!data || !balanceBase) return []
+    if (balanceView === "session") return sessionBalance.data ? buildBalanceColumns(sessionBalance.data.corners.map((c) => ({ id: c.id, name: c.name, balance: c })), balanceBase) : []
+    return buildBalanceColumns(data.corners, balanceBase)
+  }, [data, balanceBase, balanceView, sessionBalance.data])
   const noData = corners.error instanceof ApiError && (corners.error.status === 404 || corners.error.status === 422)
 
   return (
@@ -209,6 +220,39 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
               <p className="note">Drag on a trace to zoom · double-click to reset · click to pin the cursor. Dashed lines mark the brake and full-throttle points of the selected corner.</p>
             </Panel>
           </div>
+
+          <Panel
+            title="Balance, traction and lock-ups"
+            testId="balance-panel"
+            actions={
+              <div className="bal-modes">
+                <button className={balanceView === "lap" ? "active" : ""} onClick={() => setBalanceView("lap")} title="Balance of the focus lap">
+                  Lap {focusLap}
+                </button>
+                <button className={balanceView === "session" ? "active" : ""} onClick={() => setBalanceView("session")} title="Median over the session's clean laps, so one mistake does not decide">
+                  Session median
+                </button>
+              </div>
+            }
+          >
+            {balanceView === "session" && sessionBalance.isLoading && <Loading what="Measuring balance over the clean laps…" />}
+            {balanceView === "session" && sessionBalance.isError && <ErrorBox error={sessionBalance.error} />}
+            {shownBalance && balanceUnavailable(shownBalance) ? (
+              <p className="note" data-testid="balance-nodata">Not enough data for balance: {balanceUnavailable(shownBalance)}</p>
+            ) : (
+              shownBalance && (
+                <>
+                  <p className="bal-summary" data-testid="balance-summary">
+                    {shownBalance.balance_summary ?? "—"}
+                  </p>
+                  <p className="note">
+                    {balanceView === "session" && sessionBalance.data ? `Median over ${sessionBalance.data.laps} clean laps (${sessionBalance.data.lap_numbers.join(", ")}).` : `Focus lap ${data.lap}.`}
+                  </p>
+                  <BalanceStrip columns={balanceColumns} selectedId={selectedId} onSelect={(id) => setSelectedId((cur) => (cur === id ? null : id))} lockups={shownBalance.lockups} />
+                </>
+              )
+            )}
+          </Panel>
 
           <Panel title="What changed">
             {callouts.length === 0 ? (

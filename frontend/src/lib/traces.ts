@@ -141,16 +141,67 @@ function driverPanes(
 
 export const TRACE_CHANNELS = ["speed", "throttle", "brake", "gear", "rpm", "steering", "lap_time"]
 
+// ---------------------------------------------------------------- optional extra panes
+
+export interface ExtraPaneDef {
+  key: string
+  title: string
+  unit: string
+  perWheel: boolean
+  mult: number
+  decimals: number
+  height: number
+}
+
+/** Optional lap-trace panes (keys match the API's `extras`); per-wheel payload names are `<key>_FL` ... `<key>_RR`. */
+export const EXTRA_PANES: ExtraPaneDef[] = [
+  { key: "g_lat", title: "Lateral g", unit: "g", perWheel: false, mult: 1, decimals: 2, height: 120 },
+  { key: "g_long", title: "Longitudinal g", unit: "g", perWheel: false, mult: 1, decimals: 2, height: 120 },
+  { key: "slip_angle", title: "Slip angle", unit: "°", perWheel: true, mult: 180 / Math.PI, decimals: 1, height: 140 },
+  { key: "slip_ratio", title: "Slip ratio", unit: "", perWheel: true, mult: 1, decimals: 3, height: 140 },
+  { key: "tyre_surface", title: "Tyre surface temp", unit: "°C", perWheel: true, mult: 1, decimals: 0, height: 140 },
+  { key: "tyre_inner", title: "Tyre inner temp", unit: "°C", perWheel: true, mult: 1, decimals: 0, height: 140 },
+]
+
+const hasData = (v: Series | undefined) => !!v && v.some((x) => x != null)
+
+/** Panes for the chosen extras. g panes overlay focus vs reference; per-wheel panes show four wheels (reference dashed, thin). */
+export function extraPanes(get: (name: string) => { focus: Series; ref?: Series }, keys: string[] | undefined, labels: Labels): PaneSpec[] {
+  const panes: PaneSpec[] = []
+  for (const def of EXTRA_PANES) {
+    if (!keys?.includes(def.key)) continue
+    let series: SeriesSpec[]
+    if (def.perWheel) {
+      series = []
+      for (const w of WHEELS) {
+        const { focus, ref } = get(`${def.key}_${w}`)
+        const color = WHEEL_COLORS[w]
+        series.push({ label: w, values: scaled(focus, def.mult), color, decimals: def.decimals })
+        if (hasData(ref)) series.push({ label: `${w} ${labels.ref}`, values: scaled(ref, def.mult), color, dash: true, width: 1, decimals: def.decimals })
+      }
+    } else {
+      const { focus, ref } = get(def.key)
+      series = pair(focus, hasData(ref) ? ref : undefined, def.title, labels, { mult: def.mult })
+      series.forEach((s) => (s.decimals = def.decimals))
+    }
+    if (!series.some((s) => hasData(s.values))) continue
+    panes.push({ title: def.title, unit: def.unit, height: def.height, decimals: def.decimals, axisDecimals: def.decimals > 1 ? 1 : def.decimals, series })
+  }
+  return panes
+}
+
 /** Single lap (no reference). */
-export function driverTrace(ch: ChannelsPayload, labels: Labels, paneHeight = 130): TraceData {
+export function driverTrace(ch: ChannelsPayload, labels: Labels, paneHeight = 130, extras?: string[]): TraceData {
   const panes = driverPanes((n) => ({ focus: ch.channels[n] ?? [] }), null, labels, paneHeight)
+  panes.push(...extraPanes((n) => ({ focus: ch.channels[n] ?? [] }), extras, labels))
   return { x: ch.x, panes }
 }
 
 /** Focus lap vs reference lap (same or another session) on the aligned 1 m grid. */
-export function compareTrace(cmp: ComparePayload, labels: Labels, paneHeight = 130): TraceData {
+export function compareTrace(cmp: ComparePayload, labels: Labels, paneHeight = 130, extras?: string[]): TraceData {
   const col = (k: string) => (cmp[k] as Series | undefined) ?? []
   const panes = driverPanes((n) => ({ focus: col(`cmp_${n}`), ref: col(`ref_${n}`) }), cmp.delta_time, labels, paneHeight)
+  panes.push(...extraPanes((n) => ({ focus: col(`cmp_${n}`), ref: col(`ref_${n}`) }), extras, labels))
   return { x: cmp.lap_distance, panes }
 }
 

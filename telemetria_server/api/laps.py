@@ -9,7 +9,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from telemetry import channels as ch
-from telemetry import db
+from telemetry import corner_store, db, lap_extras
 from telemetry.corners import normalize_track_name, resolve_corners
 from telemetry.map_data import COLOR_CHANNELS, MAP_COLUMNS, lap_map_payload
 from telemetry.metrics import align_laps, compute_time_delta, sector_deltas
@@ -24,6 +24,25 @@ DEFAULT_CHANNELS = ("speed", "throttle", "brake", "gear", "rpm", "steering", "la
 EXTRA_UNITS = {"lap_time": "s", "lap_distance": "m"}
 BASE_COLUMNS = ("lap", "lap_distance", "bin_index")
 COMPARE_CHANNELS = ("lap_time", "speed", "throttle", "brake", "gear", "steering", "rpm")
+
+
+def _extras(keys: str | None, names) -> dict[str, str]:
+    """Requested extra keys -> {output name: stored column} for a session's column names (400 on an unknown key)."""
+    wanted = [k.strip() for k in (keys.split(",") if keys else []) if k.strip()]
+    unknown = [k for k in wanted if k not in lap_extras.BY_KEY]
+    if unknown:
+        raise HTTPException(400, f"Unknown extras: {', '.join(unknown)}")
+    mapping: dict[str, str] = {}
+    for key in dict.fromkeys(wanted):
+        mapping.update(lap_extras.resolve(lap_extras.BY_KEY[key], names))
+    return mapping
+
+
+def _with_extras(df, mapping: dict[str, str]):
+    """Copy each extra's stored column under its API output name (e.g. slip_angle_FL)."""
+    for out_name, col in mapping.items():
+        df[out_name] = df[col]
+    return df
 
 
 def _schema(session: dict[str, Any], root: Path):
@@ -41,27 +60,36 @@ def lap_channels(
     lap: int,
     request: Request,
     channels: str | None = None,
+    extras: str | None = None,
     step: float = Query(2.0, ge=0.5, le=50.0),
 ) -> Any:
     root = root_of(request)
     session = session_or_404(session_id, root)
-    wanted = [c.strip() for c in (channels.split(",") if channels else DEFAULT_CHANNELS) if c.strip()]
-    if not wanted:
+    wanted = [c.strip() for c in (channels.split(",") if channels is not None else DEFAULT_CHANNELS) if c.strip()]
+    if not wanted and not extras:
         raise HTTPException(400, "No channels requested")
     names = set(_schema(session, root).names)
+    extra_cols = _extras(extras, names)
     unknown = [c for c in wanted if c not in names]
     if unknown:
         raise HTTPException(400, f"Unknown channels: {', '.join(unknown)}")
-    df = load_columns(session_id, root, [*wanted, *BASE_COLUMNS])
+    df = load_columns(session_id, root, [*wanted, *extra_cols.values(), *BASE_COLUMNS])
     focus = lap_or_404(df, lap, session_id)
     if "lap_distance" not in focus.columns:
         raise HTTPException(404, "Session has no lap_distance channel")
     grid = distance_grid(float(focus["lap_distance"].max()), step)
-    data = resample_by_distance(focus, wanted, grid)
+    data = resample_by_distance(focus, [*wanted, *extra_cols.values()], grid)
+    for out_name, col in extra_cols.items():
+        data[out_name] = data[col]
+        wanted.append(out_name)
     units = {}
     for name in wanted:
         known = ch.channel(name)
         units[name] = known.unit if known else EXTRA_UNITS.get(name, "")
+    for extra in lap_extras.EXTRAS:
+        for out_name in lap_extras.output_names(extra):
+            if out_name in units:
+                units[out_name] = extra.unit
     return to_jsonable(
         {
             "session_id": session_id,
@@ -74,29 +102,42 @@ def lap_channels(
     )
 
 
-@router.get("/sessions/{session_id}/compare")
-def compare(session_id: int, request: Request, lap: int, ref_lap: int, ref_session: int | None = None) -> Any:
+@router.get("/sessions/{session_id}/lap-extras")
+def lap_extra_channels(session_id: int, request: Request) -> Any:
+    """The optional lap-trace channels (g-forces, per-wheel slip / temps) and whether this session has data for each."""
     root = root_of(request)
-    session_or_404(session_id, root)
-    cols = [*COMPARE_CHANNELS, *BASE_COLUMNS]
-    df = load_columns(session_id, root, cols)
+    session = session_or_404(session_id, root)
+    names = _schema(session, root).names
+    return lap_extras.availability(names, lambda cols: load_columns(session_id, root, cols))
+
+
+@router.get("/sessions/{session_id}/compare")
+def compare(
+    session_id: int, request: Request, lap: int, ref_lap: int, ref_session: int | None = None, extras: str | None = None
+) -> Any:
+    root = root_of(request)
+    session = session_or_404(session_id, root)
+    own_cols = _extras(extras, _schema(session, root).names)
+    df = _with_extras(load_columns(session_id, root, [*COMPARE_CHANNELS, *own_cols.values(), *BASE_COLUMNS]), own_cols)
     focus_df = lap_or_404(df, lap, session_id)
     ref_id = ref_session if ref_session is not None else session_id
     if ref_id != session_id:
-        session_or_404(ref_id, root)
-        ref_all = load_columns(ref_id, root, cols)
+        ref_meta = session_or_404(ref_id, root)
+        ref_cols = _extras(extras, _schema(ref_meta, root).names)
+        ref_all = _with_extras(load_columns(ref_id, root, [*COMPARE_CHANNELS, *ref_cols.values(), *BASE_COLUMNS]), ref_cols)
     else:
         ref_all = df
     ref_df = lap_or_404(ref_all, ref_lap, ref_id)
+    all_channels = [*COMPARE_CHANNELS, *own_cols]
     try:
-        aligned = compute_time_delta(align_laps(ref_df, focus_df, list(COMPARE_CHANNELS)))
+        aligned = compute_time_delta(align_laps(ref_df, focus_df, all_channels))
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     if aligned.empty:
         raise HTTPException(404, "Nothing to compare")
     out: dict[str, Any] = {"session_id": session_id, "lap": lap, "ref_session": ref_id, "ref_lap": ref_lap}
     out["lap_distance"] = aligned["lap_distance"]
-    for name in COMPARE_CHANNELS:
+    for name in all_channels:
         for prefix in ("ref", "cmp"):
             col = f"{prefix}_{name}"
             if col in aligned.columns:
@@ -108,6 +149,19 @@ def compare(session_id: int, request: Request, lap: int, ref_lap: int, ref_sessi
     out["sectors"] = sector_deltas(aligned, 3)
     out["mini_sectors"] = sector_deltas(aligned, 12).rename(columns={"sector": "mini_sector"})
     return to_jsonable(out)
+
+
+def _stored_corner_marks(track: str | None, root: Path):
+    """Corner spans / labels from the stored track corners (the Corners tab's set); (None, None) falls back to the catalogue."""
+    if not track:
+        return None, None
+    try:
+        corners = corner_store.ensure_track_corners(track, root)["corners"]
+    except Exception:  # no clean lap, detection failure, ...: the old catalogue spans still work
+        return None, None
+    spans = [{"from": float(c["start_m"]), "to": float(c["end_m"]), "name": c["name"]} for c in corners]
+    labels = [{"text": c["name"], "d": float(c["apex_m"])} for c in corners if c.get("apex_m") is not None]
+    return spans, labels
 
 
 @router.get("/sessions/{session_id}/map")
@@ -148,6 +202,7 @@ def track_map(
         track_length = None
     corners = resolve_corners(track, track_length, focus_df)
     raw_track = session.get("track")
+    spans, labels = _stored_corner_marks(track, root)
     outline = (db.get_track_outline(raw_track, root) if raw_track else None) or (
         db.get_track_outline(track, root) if track else None
     )
@@ -161,6 +216,8 @@ def track_map(
         cmp_label=f"L{lap}",
         ref_label=f"L{ref_lap}" if ref_df is not None else "Ref",
     )
+    if spans is not None:
+        payload["spans"], payload["labels"] = spans, labels
     payload.update(
         {
             "session_id": session_id,

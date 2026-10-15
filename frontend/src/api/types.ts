@@ -71,6 +71,17 @@ export interface ChannelsPayload {
   units: Record<string, string>
 }
 
+/** An optional lap-trace channel (g-forces, per-wheel slip / temps) and whether the session has data for it. */
+export interface LapExtra {
+  key: string
+  label: string
+  unit: string
+  per_wheel: boolean
+  available: boolean
+  reason: string | null
+  channels: string[]
+}
+
 export interface SectorDelta {
   dist_start: number
   dist_end: number
@@ -519,7 +530,47 @@ export interface CornerDef {
   merged_from: number[]
 }
 
+/** Understeer index per phase (deg, front minus rear |slip angle|, positive = understeer), rear slip on exit, lock-up counts per wheel. */
+export interface CornerBalance {
+  entry: Num
+  mid: Num
+  exit: Num
+  traction: Num
+  lockups: Record<string, number>
+}
+
+export type Phase = "entry" | "mid" | "exit"
+
+export interface Lockup {
+  wheel: "FL" | "FR" | "RL" | "RR"
+  distance_m: number
+  length_m: number
+  min_slip_ratio: number
+  corner: { id: number; name: string } | null
+  /** Only on the session view. */
+  lap?: number
+}
+
+/** Fields shared by /corners (selected lap) and /balance (median over clean laps). */
+export interface BalanceFields {
+  balance_available: boolean
+  balance_reason: string | null
+  /** Typical understeer index per phase; labels and colours are relative to it. */
+  balance_baseline: Record<Phase, number>
+  balance_summary: string | null
+  lockups: Lockup[]
+}
+
+export interface BalancePayload extends BalanceFields {
+  track: string
+  session_id: number
+  laps: number
+  lap_numbers: number[]
+  corners: (CornerBalance & { id: number; name: string; speed_class: SpeedClass })[]
+}
+
 export interface CornerReportRow extends CornerDef {
+  balance: CornerBalance | null
   focus: CornerMetrics
   ref: CornerMetrics
   delta: CornerMetrics
@@ -527,7 +578,7 @@ export interface CornerReportRow extends CornerDef {
   callouts: string[]
 }
 
-export interface CornersPayload {
+export interface CornersPayload extends BalanceFields {
   track: string
   session_id: number
   lap: number

@@ -6,6 +6,7 @@ import {
   compareTrace,
   cornerBands,
   driverTrace,
+  extraPanes,
   masked,
   raceTrace,
   scaled,
@@ -252,5 +253,37 @@ describe("race trace", () => {
     const actualTimes = t.panes[1].series[2]
     expect(actualTimes.values).toEqual([72, 90, 70]) // trimmed to the race length
     expect(actualTimes.mode).toBe("points")
+  })
+})
+
+describe("extra panes", () => {
+  const n = 3
+  const wheelPayload = (prefix: string, base: number) =>
+    Object.fromEntries(["FL", "FR", "RL", "RR"].map((w, i) => [`${prefix}slip_angle_${w}`, [base + i, base + i, base + i]]))
+
+  it("adds nothing unless asked", () => {
+    const ch: ChannelsPayload = { session_id: 1, lap: 1, x: [0, 1, 2], x_label: "", units: {}, channels: { g_lat: [1, 2, 3] } }
+    expect(driverTrace(ch, labels).panes.map((p) => p.title)).not.toContain("Lateral g")
+  })
+  it("overlays focus and reference for g panes", () => {
+    const cmp = { lap_distance: [0, 1, 2], delta_time: [0, 0, 0], cmp_g_lat: [1, 2, 3], ref_g_lat: [2, 3, 4] } as unknown as ComparePayload
+    const pane = compareTrace(cmp, labels, 130, ["g_lat"]).panes.find((p) => p.title === "Lateral g")!
+    expect(pane.series.map((s) => s.label)).toEqual(["Lateral g L10", "Lateral g L11"])
+    expect(pane.series[1].dash).toBe(true)
+  })
+  it("draws four wheels front-first in degrees, reference dashed", () => {
+    const cmp = { lap_distance: [0, 1, 2], delta_time: [0, 0, 0], ...wheelPayload("cmp_", 0.1), ...wheelPayload("ref_", 0.2) } as unknown as ComparePayload
+    const pane = compareTrace(cmp, labels, 130, ["slip_angle"]).panes.find((p) => p.title === "Slip angle")!
+    expect(pane.unit).toBe("°")
+    expect(pane.series.filter((s) => !s.dash).map((s) => s.label)).toEqual(["FL", "FR", "RL", "RR"])
+    expect(pane.series[0].color).toBe(WHEEL_COLORS.FL)
+    expect(pane.series[0].values[0]).toBeCloseTo((0.1 * 180) / Math.PI, 6)
+    expect(pane.series.filter((s) => s.dash)).toHaveLength(4)
+  })
+  it("skips panes without any data and single-lap panes carry no reference", () => {
+    const get = () => ({ focus: Array.from({ length: n }, () => null) })
+    expect(extraPanes(get, ["g_long", "slip_ratio"], labels)).toEqual([])
+    const solo = extraPanes(() => ({ focus: [1, 2, 3] }), ["tyre_surface"], labels)
+    expect(solo[0].series).toHaveLength(4)
   })
 })
