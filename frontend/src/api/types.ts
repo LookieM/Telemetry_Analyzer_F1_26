@@ -418,6 +418,22 @@ export interface EngineerSector {
   sector: number
   delta_s: number
 }
+export interface EngineerCornerRow {
+  corner: number
+  name: string
+  phase: "entry" | "mid" | "exit"
+  /** Variant 2 minus variant 1 (corrected); negative = variant 2 faster there. */
+  delta_s: number
+  understeer_delta_deg: number | null
+  /** Exit only: change of mean rear |slip ratio| on throttle (fraction, 0.01 = 1 %). */
+  traction_delta: number | null
+}
+export interface EngineerTagCheck {
+  tag: string
+  delta_s: number
+  agrees: boolean | null
+  text: string
+}
 export interface EngineerResult {
   pair: number
   label: string
@@ -431,6 +447,9 @@ export interface EngineerResult {
   stopwatch_winner: EngineerVariant | null
   n: Record<EngineerVariant, number>
   sectors: EngineerSector[]
+  /** Top corner / phase differences; missing or empty without corner profiles. */
+  corners?: EngineerCornerRow[]
+  tag_check?: EngineerTagCheck[]
   deg_s_per_lap: number | null
   deg_source: string | null
   your_answer: EngineerAnswer | null
@@ -597,4 +616,100 @@ export interface TrackCornersPayload {
   source_session: number | null
   source_lap: number | null
   built_at: string
+}
+
+// --- Setups page: library setups per track and the offline duel ---
+
+export interface SetupRunRow {
+  session_id: number
+  session_type: string
+  run: number
+  first_lap: number
+  last_lap: number
+  n_laps: number
+  n_clean: number
+  compound: number | null
+  compound_label: string
+  state: string
+  kind: string
+  fuel_kg: number | null
+  pace_s: number | null
+  best_s: number | null
+  wear_pct_per_lap: number | null
+}
+
+export interface SetupCandidate {
+  fingerprint: string
+  name: string | null
+  n_runs: number
+  n_clean: number
+  sessions: number[]
+  last_driven: string
+  runs: SetupRunRow[]
+}
+
+export interface SetupsPayload {
+  track: string
+  setups: SetupCandidate[]
+}
+
+export type DuelTieBreak = "stopwatch" | "balance" | "feel" | "none"
+
+export interface DuelBalancePhase {
+  deg: number | null
+  relative: number | null
+  label: string | null
+}
+
+export interface DuelBalance {
+  entry: DuelBalancePhase
+  mid: DuelBalancePhase
+  exit: DuelBalancePhase
+  distance: number | null
+}
+
+export interface DuelContestant {
+  key: string
+  name: string
+  n_laps: number
+  rank: number
+  race_pace_s: number
+  quali_pace_s: number
+  wear_pct_per_lap: number | null
+  race_cost_s: number
+  score_s: number
+  delta_s: number
+  balance: DuelBalance | null
+  sessions?: number[]
+}
+
+export interface DuelRanking {
+  contestants: DuelContestant[]
+  order: string[]
+  winner: string
+  tie_break: DuelTieBreak
+  decided: boolean
+  same_session: boolean
+  noise_s: number
+  pairs: { a: string; b: string; gap_s: number; measurable: boolean }[]
+  weights: { race: number; quali: number }
+  cost_source: "model" | "fallback" | "none"
+  cost_note: string
+  callouts: string[]
+}
+
+export interface DuelResult {
+  track: string
+  mode: "offline"
+  duel_id?: number
+  fingerprints: string[]
+  names: Record<string, string>
+  comparable: boolean
+  reasons: string[]
+  pairs: { a: string; b: string; comparable: boolean; reason: string | null }[]
+  condition: { state: string; compound: number | null; compound_label: string } | null
+  correction?: { deg_s_per_lap: number; deg_source: string; fuel_s_per_kg: number }
+  balance_note?: string | null
+  min_clean_laps: number
+  ranking: DuelRanking | null
 }

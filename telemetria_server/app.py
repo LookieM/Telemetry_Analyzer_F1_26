@@ -16,7 +16,7 @@ from telemetry.progress import ensure_progress_schema
 from telemetry.setup_reread import reread_library_setups
 from telemetry.wheel_axes_fix import repair_library_wheel_axes
 
-from .api import corners, imports, laps, library, live, settings, strategy, tracks, tyres
+from .api import corners, imports, laps, library, live, settings, setups, strategy, tracks, tyres
 from .config import REPO_ROOT, Config
 from .ingest import UdpIngest
 
@@ -80,7 +80,7 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
                 response.set_cookie(COOKIE, cfg.access_token, httponly=True, samesite="lax")
             return response
 
-    for module in (library, laps, corners, tyres, strategy, settings, imports, tracks):
+    for module in (library, laps, corners, tyres, strategy, settings, imports, tracks, setups):
         app.include_router(module.router, prefix="/api")
     app.include_router(live.router)
 

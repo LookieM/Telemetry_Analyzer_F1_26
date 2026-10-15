@@ -51,6 +51,13 @@
 .eg-sectors { display: flex; gap: 0.9em; flex-wrap: wrap; font-family: var(--font-mono); font-size: 0.95em; }
 .eg-sectors .fast b { color: var(--good); }
 .eg-sectors .slow b { color: var(--bad); }
+.eg-corners { display: flex; flex-direction: column; gap: 0.15em; font-family: var(--font-mono); font-size: 0.95em; }
+.eg-corners .fast { color: var(--good); }
+.eg-corners .slow { color: var(--bad); }
+.eg-tagcheck { font-size: 0.95em; }
+.eg-tagcheck .agree { color: var(--good); }
+.eg-tagcheck .disagree { color: var(--warn); font-weight: 600; }
+.eg-tagcheck .none { color: var(--dim, inherit); }
 .eg-agree.agree { color: var(--good); font-weight: 600; }
 .eg-agree.disagree { color: var(--warn); font-weight: 700; }
 .eg-roles { font-size: 0.9em; }

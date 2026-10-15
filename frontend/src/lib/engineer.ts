@@ -1,5 +1,5 @@
 /** Pure helpers of the Live page's Engineer card: labels, number formatting, answer validation, panel choice. */
-import type { EngineerAnswer, EngineerResult, EngineerVariant, EngineerView } from "../api/types"
+import type { EngineerAnswer, EngineerCornerRow, EngineerTagCheck, EngineerResult, EngineerVariant, EngineerView } from "../api/types"
 
 export const MAX_TAGS = 3
 
@@ -98,4 +98,25 @@ export function commandError(status: number | null, message: string): string {
   if (status === 503) return "Live telemetry is disabled on the server"
   if (status === 401) return "Access token needed - open the page with ?token=..."
   return message || "Command failed"
+}
+
+/** "T4 exit: 2 −0.08 s, rear slip −3.0 %, understeer +0.4°" (variant 2 minus 1; parts without a value are left out). */
+export function cornerRowLine(c: EngineerCornerRow): string {
+  const parts = [`2 ${fmtDelta(c.delta_s, 2)} s`]
+  if (c.traction_delta != null && Number.isFinite(c.traction_delta)) {
+    const pct = c.traction_delta * 100
+    parts.push(`rear slip ${Math.abs(pct) < 0.05 ? "0.0" : `${pct > 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}`} %`)
+  }
+  if (c.understeer_delta_deg != null && Number.isFinite(c.understeer_delta_deg)) {
+    const u = c.understeer_delta_deg
+    parts.push(`understeer ${Math.abs(u) < 0.05 ? "0.0" : `${u > 0 ? "+" : "−"}${Math.abs(u).toFixed(1)}`}°`)
+  }
+  return `${c.name} ${c.phase}: ${parts.join(", ")}`
+}
+
+/** Mark, class and sentence of one tag check line: ✓ agrees, ✗ disagrees, · nothing to say. */
+export function tagCheckLine(t: EngineerTagCheck): { mark: "✓" | "✗" | "·"; cls: "agree" | "disagree" | "none"; text: string } {
+  if (t.agrees === true) return { mark: "✓", cls: "agree", text: t.text }
+  if (t.agrees === false) return { mark: "✗", cls: "disagree", text: t.text }
+  return { mark: "·", cls: "none", text: t.text }
 }

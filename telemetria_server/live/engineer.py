@@ -33,9 +33,15 @@ mean difference vs a noise estimate (floor 0.10 s).
                   sectors: [{sector, delta_s}] largest first, deg_s_per_lap, deg_source, your_answer
                   {verdict, strength, tags, note}, agreement "agree|disagree|null", agreement_text,
                   roles: {"1": "baseline"|"change"|"start"|"final", ...} (revealed after the answer),
-                  proposed_winner}
+                  proposed_winner,
+                  corners: [{corner (id), name, phase "entry|mid|exit", delta_s (2 minus 1, corrected), understeer_delta_deg
+                  (+ = variant 2 understeers more), traction_delta (exit only; + = more rear wheelspin)}] top 5 by |delta_s|,
+                  [] without corner profiles (>= 2 counted laps with a profile per variant needed),
+                  tag_check: [{tag, delta_s (summed over the tag's corners), agrees true|false|null, text}] for the
+                  answer's tags the stopwatch can judge (entry/mid/exit x slow/fast, traction, braking_*)}
     history      [{n, kind "param|quali|skipped", param, label, variants, roles, counted, delta_s, noise_s,
-                  confidence, your_answer, winner, winner_role, outcome "changed|kept|same|skipped"}]
+                  confidence, your_answer, winner, winner_role, outcome "changed|kept|same|skipped",
+                  corners, tag_check (as in last_result; quali rows have corners only)}]
     settled      {key: {label, value (display), new (settled in this test)}}
     revert_proposal null | {param, label, from, to, race_s, quali_s, combined_s, text}  (answer with revert())
     long_run     null | {compound, label, laps: [{lap, time_s, corrected_s, wear_pct}], target,
@@ -58,6 +64,7 @@ import numpy as np
 from telemetry import compounds
 from telemetry.setup_tweaker import SETUP_PARAMS
 
+from . import corner_ab
 from .lap_correction import (DEFAULT_DEG, MISTAKE_S, NOISE_FLOOR, Lap, correct_groups,  # noqa: F401
                              mistake_limit, noise_estimate, representative_laps)
 
@@ -71,6 +78,10 @@ RACE_WEIGHT, QUALI_WEIGHT = 0.7, 0.3
 PRACTICE = ("FP1", "FP2", "FP3")
 TAGS = ("entry_slow", "entry_fast", "mid_slow", "mid_fast", "exit_slow", "exit_fast",
         "braking_stability", "braking_lockups", "traction", "kerbs", "confidence")
+TAG_LABELS = {"entry_slow": "Entry in slow corners", "entry_fast": "Entry in fast corners",
+              "mid_slow": "Mid-corner in slow corners", "mid_fast": "Mid-corner in fast corners",
+              "exit_slow": "Exit of slow corners", "exit_fast": "Exit of fast corners",
+              "braking_stability": "Braking", "braking_lockups": "Braking", "traction": "Traction"}
 VERDICTS, STRENGTHS = ("1", "2", "same"), ("slight", "clear")
 
 # Test order and first gap (garage units). camber / toe are never tested.
@@ -469,13 +480,27 @@ class Engineer:
             if a and b:
                 sectors.append({"sector": i + 1, "delta_s": float(np.mean(b) - np.mean(a))})
         sectors.sort(key=lambda s: -abs(s["delta_s"]))
+        table = self._corner_table(laps, cor)
         winner = ("2" if delta < 0 else "1") if measurable else None
         text = (f"Variant {winner} is faster by {abs(delta):.3f} s/lap (corrected, noise {noise:.2f} s)"
                 if winner else f"No measurable difference ({delta:+.3f} s/lap, noise {noise:.2f} s)")
         return {"delta_s": delta, "noise_s": noise, "confidence": "high" if ratio >= 2 else "medium" if measurable
                 else "none", "measurable": measurable, "text": text, "stopwatch_winner": winner,
                 "n": {v: len(corr[v]) for v in corr}, "means": m, "sectors": sectors, "deg_s_per_lap": deg,
-                "deg_source": src, "fuel_s_per_kg": self.fuel_k}
+                "deg_source": src, "fuel_s_per_kg": self.fuel_k, "corner_table": table,
+                "corners": corner_ab.top_rows(table)}
+
+    @staticmethod
+    def _corner_table(laps: dict[str, list[EngineerLap]], cor) -> list[dict]:
+        """Corner x phase differences (variant 2 minus 1) from the laps' profiles, or [] without enough of them."""
+        avg = {}
+        for v in ("1", "2"):
+            items = [(x.profile, cor.times[v][i] / x.lap_time_s) for i, x in enumerate(laps[v])
+                     if x.profile and x.lap_time_s > 0]
+            if len(items) < corner_ab.MIN_PROFILE_LAPS:
+                return []
+            avg[v] = corner_ab.average_profile(items)
+        return corner_ab.corner_table(avg["1"], avg["2"])
 
     def _compare(self, pair: _Pair, ans: dict) -> dict:
         a = pair.analysis
@@ -522,7 +547,8 @@ class Engineer:
         p.answer = {"verdict": verdict, "strength": strength, "tags": tags, "note": (note or "").strip() or None}
         p.analysis = self._analyze(p)
         cmp = self._compare(p, p.answer)
-        self.last_result = {**self._result_row(p), **cmp, "your_answer": p.answer}
+        checks = corner_ab.tag_check(p.analysis.get("corner_table", []), tags, verdict, TAG_LABELS)
+        self.last_result = {**self._result_row(p), **cmp, "your_answer": p.answer, "tag_check": checks}
         self._say(cmp["agreement_text"] or p.analysis["text"])
         if verdict == "same":
             self.same_streak += 1
@@ -567,6 +593,7 @@ class Engineer:
                "your_answer": p.answer, "winner": winner, "winner_role": win_role, "outcome": outcome,
                "change_delta_s": change_delta, "agreement": (self.last_result or {}).get("agreement"),
                "agreement_text": (self.last_result or {}).get("agreement_text"),
+               "tag_check": (self.last_result or {}).get("tag_check", []),
                "gap": _disp(spec, p.gap)}
         self.history.append(row)
         # stop rule: two "same" in a row or the smallest step reached
@@ -787,6 +814,8 @@ class Engineer:
                "confidence": a.get("confidence"), "measurable": a.get("measurable"), "text": a.get("text"),
                "stopwatch_winner": a.get("stopwatch_winner"), "n": a.get("n"),
                "sectors": [{"sector": s["sector"], "delta_s": _f(s["delta_s"])} for s in a.get("sectors", [])],
+               "corners": [{**c, "delta_s": _f(c["delta_s"]), "understeer_delta_deg": _f(c["understeer_delta_deg"], 2),
+                            "traction_delta": _f(c["traction_delta"], 4)} for c in a.get("corners", [])],
                "deg_s_per_lap": _f(a.get("deg_s_per_lap")), "deg_source": a.get("deg_source"),
                "laps": {v: [x.lap for x in self._counted(p, v)] for v in ("1", "2")}}
         return out

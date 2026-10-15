@@ -4,6 +4,7 @@ import { Library } from "./pages/Library"
 import { LivePage } from "./pages/Live"
 import { Planner } from "./pages/Planner"
 import { SessionPage } from "./pages/Session"
+import { SetupsIndex, SetupsPage } from "./pages/Setups"
 
 export function App() {
   const theme = useTheme()
@@ -19,6 +20,7 @@ export function App() {
             Library
           </NavLink>
           <NavLink to="/planner">Planner</NavLink>
+          <NavLink to="/setups">Setups</NavLink>
           <NavLink to="/live">Live</NavLink>
         </nav>
         <span className="spacer" />
@@ -31,6 +33,8 @@ export function App() {
           <Route path="/" element={<Library />} />
           <Route path="/session/:id/:tab?" element={<SessionPage />} />
           <Route path="/planner" element={<Planner />} />
+          <Route path="/setups" element={<SetupsIndex />} />
+          <Route path="/track/:track/setups" element={<SetupsPage />} />
           <Route path="*" element={<p>Page not found.</p>} />
         </Routes>
       </main>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { EngineerView } from "../api/types"
-import { buildAnswer, commandError, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagLabel, toggleTag, validateAnswer, variantValue } from "./engineer"
+import { buildAnswer, commandError, cornerRowLine, tagCheckLine, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagLabel, toggleTag, validateAnswer, variantValue } from "./engineer"
 
 const TAGS = ["entry_slow", "traction", "kerbs", "confidence"]
 
@@ -101,5 +101,21 @@ describe("answers", () => {
   it("builds the request body, dropping an empty note", () => {
     expect(buildAnswer({ verdict: "2", strength: "slight", tags: ["kerbs"], note: "  " })).toEqual({ verdict: "2", strength: "slight", tags: ["kerbs"] })
     expect(buildAnswer({ verdict: "1", strength: "clear", tags: [], note: " snappy " }).note).toBe("snappy")
+  })
+})
+
+describe("corner A/B lines", () => {
+  it("words a corner row with the parts that exist", () => {
+    expect(cornerRowLine({ corner: 4, name: "T4", phase: "exit", delta_s: -0.08, understeer_delta_deg: 0.4, traction_delta: -0.012 })).toBe(
+      "T4 exit: 2 −0.08 s, rear slip −1.2 %, understeer +0.4°",
+    )
+    expect(cornerRowLine({ corner: 2, name: "T2-T3", phase: "entry", delta_s: 0.06, understeer_delta_deg: null, traction_delta: null })).toBe("T2-T3 entry: 2 +0.06 s")
+    expect(cornerRowLine({ corner: 1, name: "T1", phase: "mid", delta_s: 0.0004, understeer_delta_deg: -0.01, traction_delta: null })).toBe("T1 mid: 2 0.00 s, understeer 0.0°")
+  })
+  it("marks agreement, disagreement and neutral tag checks", () => {
+    const t = { tag: "exit_slow", delta_s: -0.1, text: "Exit of slow corners: Variant 2 is 0.10 s faster there" }
+    expect(tagCheckLine({ ...t, agrees: true })).toMatchObject({ mark: "✓", cls: "agree" })
+    expect(tagCheckLine({ ...t, agrees: false })).toMatchObject({ mark: "✗", cls: "disagree" })
+    expect(tagCheckLine({ ...t, agrees: null })).toMatchObject({ mark: "·", cls: "none", text: t.text })
   })
 })

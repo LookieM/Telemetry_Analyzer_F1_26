@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
-import { NavLink, useNavigate, useParams } from "react-router-dom"
+import { Link, NavLink, useNavigate, useParams } from "react-router-dom"
 import { useDeleteSession, usePatchSession, useSession } from "../api/hooks"
 import type { SessionMeta } from "../api/types"
 import { ErrorBox, Loading, Panel } from "../components/ui"
 import { SESSION_TYPES } from "../lib/constants"
 import { formatBytes, formatLapTime } from "../lib/format"
 import { bestLapNumber } from "../lib/sessions"
+import "./Setups.css"
 import { CornersTab } from "./CornersTab"
 import { LapsTab } from "./LapsTab"
 import { StrategyTab } from "./StrategyTab"
@@ -103,6 +104,11 @@ export function SessionPage() {
           {session.conditions ? ` · ${session.conditions}` : ""}
         </span>
         <span className="spacer" />
+        {session.track && (
+          <Link className="button" to={`/track/${encodeURIComponent(session.track)}/setups`} title="Compare the setups driven on this track">
+            Setups
+          </Link>
+        )}
         <button onClick={() => setShowDetails((v) => !v)}>{showDetails ? "Hide details" : "Details"}</button>
       </div>
       {showDetails && <TagsEditor session={session} />}

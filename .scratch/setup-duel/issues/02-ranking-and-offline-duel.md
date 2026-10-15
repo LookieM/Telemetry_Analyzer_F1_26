@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (and corners-and-wheels 03 for the balance column)
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure ranking function (weights, noise band, tie-breaks stopwatch → balance → feel, wear cost with fallback)
 - [ ] Candidates from the run splitter across the track's sessions, comparability filter with reasons

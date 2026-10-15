@@ -4,6 +4,7 @@ import type {
   AllocationPayload,
   ChannelsPayload,
   ComparePayload,
+  DuelResult,
   BalancePayload,
   CornersPayload,
   TrackCornersPayload,
@@ -18,6 +19,7 @@ import type {
   ReviewPayload,
   SessionDetail,
   SessionMeta,
+  SetupsPayload,
   Targets,
   TrackModel,
   TrackCatalog,
@@ -192,3 +194,25 @@ export const useRebuildCorners = () =>
   useInvalidating((v: { track: string; session: number; lap: number }) =>
     api.send<TrackCornersPayload>("POST", `/tracks/${encodeURIComponent(v.track)}/corners/rebuild`, { session: v.session, lap: v.lap }),
   )
+
+// --- Setups page ---
+
+export const useTrackSetups = (track: string | null) =>
+  useQuery({
+    queryKey: ["setups", track],
+    queryFn: () => api.get<SetupsPayload>(`/tracks/${encodeURIComponent(track ?? "")}/setups`),
+    enabled: !!track,
+    staleTime: 60_000,
+  })
+
+export function useNameSetup(track: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { fingerprint: string; name: string }) =>
+      api.send<{ fingerprint: string; name: string | null }>("PUT", `/setups/${v.fingerprint}/name`, { track, name: v.name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["setups", track] }),
+  })
+}
+
+export const useRunDuel = (track: string) =>
+  useMutation({ mutationFn: (fingerprints: string[]) => api.send<DuelResult>("POST", `/tracks/${encodeURIComponent(track)}/duel`, { fingerprints }) })

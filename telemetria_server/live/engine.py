@@ -8,7 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from telemetry.metrics import FUEL_S_PER_KG
 from ..udp import srt_columns as cols
 from ..udp import structs
 from .engineer import PRACTICE, Engineer, EngineerError, EngineerLap
+from .lap_profile import LapProfiler
 from .state import (PID_DAMAGE, PID_EVENT, PID_LAP, PID_PARTICIPANTS, PID_SESSION, PID_SETUP, PID_STATUS,
                     PID_TELEMETRY, PID_TELEMETRY2, LiveState)
 
@@ -172,6 +173,9 @@ class LiveEngine:
         self._eng_lock = threading.Lock()
         self.engineer_save_pending: dict | None = None  # picked up by the server loop and stored off-thread
         self._eng_saved = False
+        # set by the ingest: () -> the running SessionRecorder; without it laps carry no corner profile
+        self.recorder_source: Callable[[], Any] | None = None
+        self._profiler = LapProfiler(app_root)
         self._reset_lap_marks()
         self._set_first_age: dict[int, int] = {}
 
@@ -411,6 +415,25 @@ class LiveEngine:
             self._eng_saved = True
             self.engineer_save_pending = self.engineer.result()
 
+    def _lap_profile(self, lap: int) -> dict | None:
+        """Corner profile of the lap that just ended, from the recorder's frame of it (recorder laps are 0-based).
+        The recorder is fed before the engine ticks, so the lap's bins are complete here. Never raises."""
+        if self.recorder_source is None:
+            return None
+        try:
+            rec = self.recorder_source()
+            if rec is None:
+                return None
+            from telemetry.loader import normalize_frame
+
+            frame = rec.lap_frame(lap - 1)
+            if frame.empty:
+                return None
+            return self._profiler.profile(self._track_name, normalize_frame(frame), self._track_len or rec.track_length)
+        except Exception:
+            log.exception("engineer: corner profile of lap %s failed", lap)
+            return None
+
     def _engineer_lap(self, lap: int, time_s: float, valid: bool, fuel_start, fuel_end) -> None:
         if not self.engineer.active:
             return
@@ -427,7 +450,7 @@ class LiveEngine:
             fresh_set=bool(idx is not None and self._set_first_age.get(idx, age0) == 0),
             tyre_age_laps=age0,
             wear_max_pct=float(max(dmg["m_carDamageData"][self.s.player]["m_tyresWear"])) if dmg is not None else None,
-            setup=self._player_setup())
+            setup=self._player_setup(), profile=self._lap_profile(lap))
         with self._eng_lock:
             self.engineer.on_lap(el)
             self._eng_pump()

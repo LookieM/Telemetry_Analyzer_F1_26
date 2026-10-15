@@ -1,11 +1,12 @@
 import { useMemo, useRef, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { useDeleteSession, useImportFile, useLibraryStats, useSessions } from "../api/hooks"
 import type { SessionMeta } from "../api/types"
 import { DataTable, ErrorBox, Loading, Metric, MetricRow, Panel, type Column } from "../components/ui"
 import { SESSION_TYPES } from "../lib/constants"
 import { formatBytes, formatDate, formatLapTime } from "../lib/format"
 import { filterSessions } from "../lib/sessions"
+import "./Setups.css"
 
 function ImportPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -127,6 +128,11 @@ export function Library() {
         title="Sessions"
         actions={
           <>
+            {track && (
+              <Link className="button" to={`/track/${encodeURIComponent(track)}/setups`} title="Compare the setups you have driven here">
+                Setups for {track}
+              </Link>
+            )}
             <select value={track} onChange={(e) => setTrack(e.target.value)} aria-label="Filter track">
               <option value="">All tracks</option>
               {tracks.map((t) => (

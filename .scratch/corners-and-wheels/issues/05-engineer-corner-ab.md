@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure lap → corner profile function (reuses 02/03 analysis)
 - [ ] Ingest hands completed lap frames to the engine; EngineerLap carries the optional profile

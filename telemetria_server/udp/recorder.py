@@ -141,6 +141,11 @@ class SessionRecorder:
         """Cheap copy of the recorded bins, safe to hand to a worker thread while feeding continues."""
         return {lap: dict(bins) for lap, bins in self._laps.items()}
 
+    def lap_frame(self, lap: int) -> pd.DataFrame:
+        """SRT-style frame of one recorded lap (0-based recorder lap = game lap number - 1); empty if unknown."""
+        bins = self._laps.get(lap)
+        return self.build_frame({lap: dict(bins)}) if bins else pd.DataFrame()
+
     def build_frame(self, laps: dict[int, dict[int, dict]] | None = None) -> pd.DataFrame:
         """SRT-style frame: per lap, 1 m bins from first to last observed bin, gaps interpolated."""
         laps = self._laps if laps is None else laps

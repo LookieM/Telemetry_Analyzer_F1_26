@@ -1,0 +1,69 @@
+.setup-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+.setup-card.picked {
+  border-color: var(--info);
+}
+.setup-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.setup-pick input {
+  width: 16px;
+  height: 16px;
+}
+.setup-name {
+  min-width: 200px;
+  font-weight: 600;
+}
+.mono {
+  font-family: var(--font-mono);
+}
+.field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.verdict {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin: 0;
+}
+.warn-text {
+  color: var(--warn);
+}
+.callouts {
+  margin: 0;
+  padding-left: 18px;
+}
+.not-comparable {
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+.not-comparable ul {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+tr.leader-row td {
+  background: var(--band);
+}
+a.button {
+  font-weight: 600;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+  text-decoration: none;
+}
+a.button:hover {
+  background: var(--border);
+}
+.not-comparable { margin-top: 8px; }

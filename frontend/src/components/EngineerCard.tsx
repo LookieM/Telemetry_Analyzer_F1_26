@@ -2,7 +2,7 @@
 import { useState } from "react"
 import { ApiError, engineerApi } from "../api/client"
 import type { EngineerHistoryRow, EngineerResult, EngineerVariant, EngineerView } from "../api/types"
-import { MAX_TAGS, PHASE_LABEL, buildAnswer, commandError, confidenceLabel, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagLabel, toggleTag, validateAnswer, variantValue } from "../lib/engineer"
+import { MAX_TAGS, PHASE_LABEL, buildAnswer, commandError, confidenceLabel, cornerRowLine, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagCheckLine, tagLabel, toggleTag, validateAnswer, variantValue } from "../lib/engineer"
 import "./EngineerCard.css"
 
 type Run = (fn: () => Promise<EngineerView>) => Promise<void>
@@ -42,6 +42,28 @@ function Result({ r }: { r: EngineerResult }) {
             </span>
           ))}
           <span className="dim">(variant 2 minus 1)</span>
+        </div>
+      )}
+      {!!r.corners?.length && (
+        <div className="eg-corners" data-testid="eg-corners">
+          {r.corners.map((c) => (
+            <div key={`${c.corner}-${c.phase}`} className={c.delta_s < 0 ? "fast" : "slow"}>
+              {cornerRowLine(c)}
+            </div>
+          ))}
+          <span className="dim">(variant 2 minus 1)</span>
+        </div>
+      )}
+      {!!r.tag_check?.length && (
+        <div className="eg-tagcheck" data-testid="eg-tagcheck">
+          {r.tag_check.map((t) => {
+            const l = tagCheckLine(t)
+            return (
+              <div key={t.tag} className={l.cls}>
+                {l.mark} {l.text}
+              </div>
+            )
+          })}
         </div>
       )}
       {r.agreement_text && <div className={`eg-agree ${r.agreement ?? ""}`}>{r.agreement_text}</div>}

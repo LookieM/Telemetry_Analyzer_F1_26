@@ -146,6 +146,7 @@ class UdpIngest:
         self.clients: set[asyncio.Queue] = set()
         self.recent_events: deque[dict] = deque(maxlen=12)  # replayed to a client that connects late
         self.mgr = SessionManager(self._queue_ingest, on_lap=self._queue_checkpoint)
+        self.engine.recorder_source = lambda: self.mgr.rec  # the engineer's per-lap corner profile reads it
         self.live_dir = cfg.app_root / "data" / "live"
         self.transport = None
         self.protocol: _Protocol | None = None

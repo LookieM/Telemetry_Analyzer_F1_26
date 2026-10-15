@@ -132,3 +132,58 @@ def test_engine_adapts_laps_into_the_engineer(tmp_path):
     assert all(x is not None and x > 10 for x in (lap.s1, lap.s2, lap.s3)) and abs(sum(lap.sectors) - lap.lap_time_s) < 0.01
     assert lap.setup["wing_setup_0"] > 0 and lap.setup["camber_setup_0"] < -1       # garage degrees, not radians
     assert any(ev["kind"] == "engineer" for ev in e.pop_events())
+
+
+def test_engine_attaches_a_corner_profile_from_the_recorder_to_each_full_lap(tmp_path):
+    """Same replay, with the recorder wired in like the ingest does: full laps carry a profile (corners built from the
+    live lap, kept in memory); a never-wired engine gives laps without one."""
+    import numpy as np
+
+    from telemetria_server.ingest import SessionManager
+    from telemetria_server.live.engineer import EngineerLap
+    from telemetria_server.live.state import PID_SESSION
+
+    (tmp_path / "data").mkdir()
+    s, mgr = LiveState(), SessionManager()
+    e = LiveEngine(s, tmp_path)
+    e.recorder_source = lambda: mgr.rec
+    got: list[EngineerLap] = []
+    orig = e.engineer.__class__.on_lap
+    e.engineer.__class__.on_lap = lambda self, lap: (got.append(lap), orig(self, lap))[1]
+    try:
+        started = False
+        for i, (t, d) in enumerate(iter_capture(CAP)):
+            s.feed(d, t)
+            mgr.feed(d, t)
+            if i % 120 or i < 3000:
+                continue
+            if s.get(PID_SESSION) is not None:
+                sess = np.array([s.pk[PID_SESSION]])
+                sess[0]["m_sessionType"], sess[0]["m_weather"] = 1, 0
+                s.pk[PID_SESSION] = sess[0]
+            e.tick()
+            if not started and s.get(PID_SESSION) is not None:
+                e.engineer_start("short")
+                started = True
+            if len(got) >= 4 or i > 250_000:
+                break
+    finally:
+        e.engineer.__class__.on_lap = orig
+    full = [x for x in got if x.profile]
+    assert len(full) >= 2
+    prof = full[-1].profile
+    assert len(prof) >= 10
+    c = next(iter(prof.values()))
+    assert 1 < c["time_s"] < 40 and abs(sum(c["phases"].values()) - c["time_s"]) < 0.5
+    assert sum(x["understeer"]["mid"] is not None for x in prof.values()) >= len(prof) // 2
+    total = sum(x["time_s"] for x in prof.values())
+    assert 0.2 * full[-1].lap_time_s < total < full[-1].lap_time_s
+
+
+def test_a_failing_recorder_never_breaks_the_engine(tmp_path):
+    e = LiveEngine(LiveState(), tmp_path)
+    assert e._lap_profile(3) is None                       # not wired
+    e.recorder_source = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+    assert e._lap_profile(3) is None
+    e.recorder_source = lambda: None
+    assert e._lap_profile(3) is None
