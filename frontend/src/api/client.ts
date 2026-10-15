@@ -1,5 +1,5 @@
 /** Thin fetch wrapper: JSON in / out, errors carry the server's `detail`. */
-import type { EngineerAnswer, EngineerView } from "./types"
+import type { BaselinePayload, BaselineRequest, EngineerAnswer, EngineerView } from "./types"
 
 export class ApiError extends Error {
   constructor(
@@ -52,4 +52,8 @@ export const engineerApi = {
   skip: () => api.send<EngineerView>("POST", "/live/engineer/skip"),
   nextPhase: () => api.send<EngineerView>("POST", "/live/engineer/next-phase"),
   stop: () => api.send<EngineerView>("POST", "/live/engineer/stop"),
+}
+
+export const baselineApi = {
+  set: (track: string, body: BaselineRequest) => api.send<BaselinePayload>("POST", `/tracks/${encodeURIComponent(track)}/baseline`, body),
 }

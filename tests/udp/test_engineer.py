@@ -402,3 +402,22 @@ def test_idle_engineer_has_a_quiet_view():
     e.on_lap(EngineerLap(lap=1, lap_time_s=90.0))      # ignored
     with pytest.raises(EngineerError):
         e.next_phase()
+
+
+def test_baseline_offer_lists_what_changed_once_done():
+    e = make()
+    car = Car(e)
+    assert e.view()["baseline_offer"] is None            # not done yet
+    decide(e, car, lambda x: 90.0 - 0.3 * x)
+    e.stop()
+    offer = e.view()["baseline_offer"]
+    assert offer["final"][KEY] == 28.0 and offer["final"]["wing_setup_1"] == 20.0
+    assert offer["changed"] == [{"key": KEY, "label": "Front wing", "from": 25, "to": 28}]
+    json.dumps(offer)
+
+
+def test_baseline_offer_is_null_when_nothing_changed():
+    e = make()
+    e.stop()
+    v = e.view()
+    assert v["phase"] == "done" and v["baseline_offer"] is None

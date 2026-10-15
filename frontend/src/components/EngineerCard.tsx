@@ -1,7 +1,8 @@
 /** Live page: the race engineer card (optometrist-style setup test). All decisions are server-side; this renders the view. */
 import { useState } from "react"
-import { ApiError, engineerApi } from "../api/client"
+import { ApiError, baselineApi, engineerApi } from "../api/client"
 import type { EngineerHistoryRow, EngineerResult, EngineerVariant, EngineerView } from "../api/types"
+import { engineerBaselineName, offerSummary } from "../lib/baseline"
 import { MAX_TAGS, PHASE_LABEL, buildAnswer, commandError, confidenceLabel, cornerRowLine, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagCheckLine, tagLabel, toggleTag, validateAnswer, variantValue } from "../lib/engineer"
 import "./EngineerCard.css"
 
@@ -210,6 +211,34 @@ function RunPanel({ v }: { v: EngineerView }) {
   )
 }
 
+function BaselineOffer({ v }: { v: EngineerView }) {
+  const offer = v.baseline_offer
+  const [state, setState] = useState<"idle" | "busy" | "done" | "error">("idle")
+  if (!offer || !v.track) return null
+  const make = async () => {
+    setState("busy")
+    try {
+      await baselineApi.set(v.track!, { setup: offer.final, source: "engineer", name: engineerBaselineName() })
+      setState("done")
+    } catch {
+      setState("error")
+    }
+  }
+  return (
+    <div className="eg-offer" data-testid="eg-offer">
+      <div className="eg-hint">Changed in this test: {offerSummary(offer)}</div>
+      {state === "done" ? (
+        <div className="eg-hint" data-testid="eg-offer-done">Saved as the {v.track} baseline (see the Setups page).</div>
+      ) : (
+        <button type="button" className="eg-ctl" disabled={state === "busy"} onClick={() => void make()} data-testid="eg-make-baseline">
+          Make this the track baseline
+        </button>
+      )}
+      {state === "error" && <div className="eg-error" role="alert">Could not save the baseline</div>}
+    </div>
+  )
+}
+
 function LongRun({ v }: { v: EngineerView }) {
   const lr = v.long_run
   const laps = lr?.laps ?? []
@@ -333,6 +362,7 @@ export function EngineerCard({ view }: { view: EngineerView | null | undefined }
       {panel === "question" && v && <QuestionForm key={v.history.length} v={v} run={run} busy={busy} />}
       {(panel === "run" || panel === "quali") && v && <RunPanel v={v} />}
       {(panel === "long_run" || panel === "done") && v && <LongRun v={v} />}
+      {panel === "done" && v && <BaselineOffer v={v} />}
       {panel === "done" && <Start busy={busy} run={run} />}
 
       {error && (

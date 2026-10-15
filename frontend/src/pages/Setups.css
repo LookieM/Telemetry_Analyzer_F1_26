@@ -67,3 +67,52 @@ a.button:hover {
   background: var(--border);
 }
 .not-comparable { margin-top: 8px; }
+
+.baseline-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 8px;
+}
+.baseline-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px 18px;
+}
+.baseline-group h4 {
+  margin: 0 0 2px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+}
+.baseline-group dl {
+  margin: 0;
+}
+.baseline-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1px 0;
+  border-bottom: 1px dotted var(--border);
+}
+.baseline-row dt,
+.baseline-row dd {
+  margin: 0;
+}
+.baseline-history {
+  margin-top: 10px;
+}
+.baseline-history ul {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0;
+}
+.baseline-history li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 3px 0;
+}

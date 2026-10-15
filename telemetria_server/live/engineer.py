@@ -46,6 +46,8 @@ mean difference vs a noise estimate (floor 0.10 s).
     revert_proposal null | {param, label, from, to, race_s, quali_s, combined_s, text}  (answer with revert())
     long_run     null | {compound, label, laps: [{lap, time_s, corrected_s, wear_pct}], target,
                   wear_pct_per_lap, pace_deg_s_per_lap}
+    baseline_offer  null | {final: {garage setup}, changed: [{key, label, from, to (display units)}]}; only in phase
+                  "done" and only when a parameter changed (the app offers it as the track baseline)
     feed         [{t, text}]  last ~20 lines (``drain_feed()`` yields only the new ones)
 
 ``result()`` is the JSON-able record to persist: view-like history plus track, program, started_at,
@@ -879,8 +881,16 @@ class Engineer:
             "history": list(self.history), "settled": settled,
             "revert_proposal": {k: v for k, v in self.revert_prop.items() if k not in ("old", "from_to")}
             if self.revert_prop else None,
-            "long_run": self._long_run_summary(), "feed": list(self.feed),
+            "long_run": self._long_run_summary(), "baseline_offer": self._baseline_offer(), "feed": list(self.feed),
         }
+
+    def _baseline_offer(self) -> dict | None:
+        if self.phase != "done":
+            return None
+        final = self.final_setup or {**self.start_setup, **self.work}
+        changed = [{"key": k, "label": SPECS[k].label, "from": _disp(SPECS[k], self.start_setup[k]), "to": _disp(SPECS[k], final[k])}
+                   for k in SPECS if k in final and k in self.start_setup and abs(final[k] - self.start_setup[k]) > SPECS[k].step / 2]
+        return {"final": {k: float(v) for k, v in final.items()}, "changed": changed} if changed else None
 
     def result(self) -> dict:
         """JSON-able record of what was decided (valid any time after ``start``)."""

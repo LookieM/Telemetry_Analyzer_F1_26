@@ -520,7 +520,14 @@ export interface EngineerView {
   settled: Record<string, { label: string; value: string | number; new: boolean }>
   revert_proposal: EngineerRevert | null
   long_run: EngineerLongRun | null
+  /** Only in phase "done" and only when a parameter changed: the final setup, offered as the track baseline. */
+  baseline_offer?: EngineerBaselineOffer | null
   feed: { t: number; text: string }[]
+}
+
+export interface EngineerBaselineOffer {
+  final: Record<string, number>
+  changed: { key: string; label: string; from: number; to: number }[]
 }
 
 // ---------------------------------------------------------------- corners
@@ -713,3 +720,42 @@ export interface DuelResult {
   min_clean_laps: number
   ranking: DuelRanking | null
 }
+
+// --- Track baseline ---
+
+export interface GarageValue {
+  group: string
+  key: string
+  label: string
+  value: number
+  unit: string
+}
+
+export type BaselineSource = "duel" | "engineer" | "manual" | "library" | "generator"
+
+export interface TrackBaseline {
+  id: number
+  track: string
+  setup: Record<string, number>
+  fingerprint: string | null
+  name: string
+  source: BaselineSource
+  ref_id: number | null
+  meta: Record<string, unknown>
+  created_at: string
+  active: boolean
+  display: GarageValue[]
+}
+
+export interface BaselinePayload {
+  track: string
+  active: TrackBaseline | null
+  history: TrackBaseline[]
+}
+
+export type BaselineRequest =
+  | { duel_id: number; winner_key: string; name?: string }
+  | { engineer_test_id: number; name?: string }
+  | { session_id: number; name?: string }
+  | { setup: Record<string, number>; source: "manual" | "generator" | "engineer"; name?: string; meta?: Record<string, unknown> }
+  | { restore_id: number }

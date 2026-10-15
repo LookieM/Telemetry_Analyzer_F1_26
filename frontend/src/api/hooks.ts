@@ -2,6 +2,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, qs } from "./client"
 import type {
   AllocationPayload,
+  BaselinePayload,
+  BaselineRequest,
   ChannelsPayload,
   ComparePayload,
   DuelResult,
@@ -216,3 +218,20 @@ export function useNameSetup(track: string) {
 
 export const useRunDuel = (track: string) =>
   useMutation({ mutationFn: (fingerprints: string[]) => api.send<DuelResult>("POST", `/tracks/${encodeURIComponent(track)}/duel`, { fingerprints }) })
+
+// --- Track baseline ---
+
+export const useTrackBaseline = (track: string | null) =>
+  useQuery({
+    queryKey: ["baseline", track],
+    queryFn: () => api.get<BaselinePayload>(`/tracks/${encodeURIComponent(track ?? "")}/baseline`),
+    enabled: !!track,
+  })
+
+export function useSetBaseline(track: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: BaselineRequest) => api.send<BaselinePayload>("POST", `/tracks/${encodeURIComponent(track)}/baseline`, body),
+    onSuccess: (data) => qc.setQueryData(["baseline", track], data),
+  })
+}

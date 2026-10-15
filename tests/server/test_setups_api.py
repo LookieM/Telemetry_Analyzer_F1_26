@@ -114,3 +114,83 @@ def test_empty_library_has_no_setups(empty_client):
     assert empty_client.get("/api/tracks/Monza/setups").json() == {"track": "Monza", "setups": []}
     assert empty_client.put("/api/setups/abc/name", json={"track": "Monza", "name": "x"}).json()["name"] == "x"
     assert empty_client.get("/api/tracks/Monza/setups").json()["setups"] == []
+
+
+# --------------------------------------------------------------------------- track baseline
+
+MANUAL = {"fuel_setup": 30.0, "wing_setup_0": 25.0, "wing_setup_1": 20.0, "diff_onThrottle_setup": 0.65,
+          "camber_setup_0": -3.5, "tyre_press_setup_0": 175000.0, "brake_bias_setup": 0.56}
+
+
+def _baseline(client, track=TRACK):
+    return client.get(f"/api/tracks/{track}/baseline").json()
+
+
+def test_baseline_empty_then_manual_with_display(empty_client):
+    assert _baseline(empty_client, "Monza") == {"track": "Monza", "active": None, "history": []}
+    r = empty_client.post("/api/tracks/Monza/baseline", json={"setup": MANUAL, "source": "manual", "name": "My Monza"})
+    assert r.status_code == 200
+    act = r.json()["active"]
+    assert act["name"] == "My Monza" and act["source"] == "manual" and act["active"] and act["meta"] == {}
+    assert act["setup"]["wing_setup_0"] == 25.0 and act["created_at"]
+    groups = [d["group"] for d in act["display"]]
+    assert groups == ["Fuel", "Aero", "Aero", "Transmission", "Geometry", "Brakes", "Tyres"]
+    by = {d["key"]: d for d in act["display"]}
+    assert by["diff_onThrottle_setup"]["value"] == 65 and by["diff_onThrottle_setup"]["unit"] == "%"
+    assert by["tyre_press_setup_0"]["unit"] == "psi" and by["tyre_press_setup_0"]["value"] == pytest.approx(25.38, abs=0.01)
+    assert set(by["wing_setup_0"]) == {"group", "key", "label", "value", "unit"}
+
+
+def test_baseline_one_active_history_and_restore(empty_client):
+    c = empty_client
+    first = c.post("/api/tracks/Monza/baseline", json={"setup": MANUAL, "name": "A"}).json()["active"]["id"]
+    gen = c.post("/api/tracks/Monza/baseline", json={"setup": {**MANUAL, "wing_setup_0": 30.0}, "source": "generator",
+                                                     "name": "B", "meta": {"confidence": {"wing_setup_0": 0.7}}}).json()
+    assert gen["active"]["name"] == "B" and gen["active"]["meta"] == {"confidence": {"wing_setup_0": 0.7}}
+    assert [h["name"] for h in gen["history"]] == ["B", "A"] and [h["active"] for h in gen["history"]] == [True, False]
+    back = c.post("/api/tracks/Monza/baseline", json={"restore_id": first}).json()
+    assert back["active"]["name"] == "A" and sum(h["active"] for h in back["history"]) == 1 and len(back["history"]) == 2
+    assert _baseline(c, "Monza")["active"]["id"] == first
+    # another track is separate and names are normalised
+    c.post("/api/tracks/Monza/baseline", json={"setup": MANUAL})
+    assert _baseline(c, "Spa")["active"] is None
+    assert c.post("/api/tracks/Spa/baseline", json={"restore_id": first}).status_code == 404
+
+
+def test_baseline_errors(empty_client):
+    c = empty_client
+    assert c.post("/api/tracks/Monza/baseline", json={}).status_code == 422
+    assert c.post("/api/tracks/Monza/baseline", json={"setup": {}}).status_code == 422
+    assert c.post("/api/tracks/Monza/baseline", json={"setup": MANUAL, "source": "duel"}).status_code == 422
+    assert c.post("/api/tracks/Monza/baseline", json={"setup": {"wing_setup_0": "x"}}).status_code == 422
+    assert c.post("/api/tracks/Monza/baseline", json={"session_id": 999}).status_code == 404
+    assert c.post("/api/tracks/Monza/baseline", json={"duel_id": 999, "winner_key": "a"}).status_code == 404
+    assert c.post("/api/tracks/Monza/baseline", json={"duel_id": 1}).status_code == 422
+    assert c.post("/api/tracks/Monza/baseline", json={"engineer_test_id": 999}).status_code == 404
+    assert c.post("/api/tracks/Monza/baseline", json={"restore_id": 999}).status_code == 404
+
+
+def test_baseline_from_engineer_test(empty_client, tmp_path):
+    from telemetry import engineer_log
+
+    tid = engineer_log.save_test({"track": "Monza", "program": "short", "started_at": 1.0, "finished_at": 2.0,
+                                  "baseline": MANUAL, "final": {**MANUAL, "wing_setup_0": 28.0}}, tmp_path)
+    r = empty_client.post("/api/tracks/Monza/baseline", json={"engineer_test_id": tid}).json()["active"]
+    assert r["source"] == "engineer" and r["ref_id"] == tid and r["setup"]["wing_setup_0"] == 28.0
+
+
+def test_baseline_from_session_and_duel_winner(hun, hun_root):
+    setups = _setups(hun)
+    if C4_A not in setups:
+        pytest.skip("library differs from the one this test was written against")
+    sid = setups[C4_A]["runs"][0]["session_id"]
+    s = hun.post(f"/api/tracks/{TRACK}/baseline", json={"session_id": sid}).json()["active"]
+    assert s["source"] == "library" and s["ref_id"] == sid and s["display"]
+    duel = hun.post(f"/api/tracks/{TRACK}/duel", json={"fingerprints": [C4_A, C4_B]}).json()
+    win = duel["ranking"]["winner"]
+    r = hun.post(f"/api/tracks/hungaroring/baseline", json={"duel_id": duel["duel_id"], "winner_key": win}).json()
+    act = r["active"]
+    assert act["source"] == "duel" and act["ref_id"] == duel["duel_id"] and act["fingerprint"] == win
+    assert act["meta"]["winner_key"] == win and len(r["history"]) == 2 and r["history"][1]["active"] is False
+    assert any(d["key"] == "wing_setup_0" for d in act["display"])
+    assert hun.post(f"/api/tracks/{TRACK}/baseline", json={"duel_id": duel["duel_id"], "winner_key": INTERS}).status_code == 422

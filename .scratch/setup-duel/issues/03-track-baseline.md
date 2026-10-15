@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] track_baselines table, one active per track, history; GET/POST /api/tracks/{track}/baseline
 - [ ] Setups page baseline card (garage order/units, source, history, restore older)

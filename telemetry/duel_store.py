@@ -26,7 +26,23 @@ CREATE TABLE IF NOT EXISTS duels (
     started_at TEXT NOT NULL,
     result_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS track_baselines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    track TEXT NOT NULL,
+    setup_json TEXT NOT NULL,
+    fingerprint TEXT,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    ref_id INTEGER,
+    meta_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_track_baselines_track ON track_baselines (track, active);
 """
+
+BASELINE_SOURCES = ("duel", "engineer", "manual", "library", "generator")
 
 
 def ensure_duel_schema(app_root: Path | None = None) -> None:
@@ -77,3 +93,53 @@ def get_duel(duel_id: int, app_root: Path | None = None) -> dict[str, Any] | Non
     if not row:
         return None
     return {"id": row["id"], "track": row["track"], "mode": row["mode"], "started_at": row["started_at"], "result": json.loads(row["result_json"])}
+
+
+# --------------------------------------------------------------------------- track baselines
+
+
+def _baseline_row(row: Any) -> dict[str, Any]:
+    return {
+        "id": row["id"], "track": row["track"], "setup": json.loads(row["setup_json"]), "fingerprint": row["fingerprint"],
+        "name": row["name"], "source": row["source"], "ref_id": row["ref_id"], "meta": json.loads(row["meta_json"] or "{}"),
+        "created_at": row["created_at"], "active": bool(row["active"]),
+    }
+
+
+def set_baseline(track: str, setup: dict[str, Any], *, source: str, name: str, fingerprint: str | None = None,
+                 ref_id: int | None = None, meta: dict[str, Any] | None = None, app_root: Path | None = None) -> dict[str, Any]:
+    """Store a new baseline for the track and make it the only active one (older rows stay as history)."""
+    if source not in BASELINE_SOURCES:
+        raise ValueError(f"unknown baseline source {source!r}")
+    ensure_duel_schema(app_root)
+    with connect(app_root) as conn:
+        conn.execute("UPDATE track_baselines SET active = 0 WHERE track = ?", (track,))
+        cur = conn.execute(
+            "INSERT INTO track_baselines (track, setup_json, fingerprint, name, source, ref_id, meta_json, created_at, active) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            (track, json.dumps(setup, default=float), fingerprint, name, source, ref_id, json.dumps(meta or {}, default=float), _now()),
+        )
+        row = conn.execute("SELECT * FROM track_baselines WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _baseline_row(row)
+
+
+def restore_baseline(track: str, baseline_id: int, app_root: Path | None = None) -> dict[str, Any] | None:
+    """Re-activate an older row of this track; None when it does not exist (or belongs to another track)."""
+    ensure_duel_schema(app_root)
+    with connect(app_root) as conn:
+        row = conn.execute("SELECT * FROM track_baselines WHERE id = ? AND track = ?", (baseline_id, track)).fetchone()
+        if not row:
+            return None
+        conn.execute("UPDATE track_baselines SET active = 0 WHERE track = ?", (track,))
+        conn.execute("UPDATE track_baselines SET active = 1 WHERE id = ?", (baseline_id,))
+        row = conn.execute("SELECT * FROM track_baselines WHERE id = ?", (baseline_id,)).fetchone()
+    return _baseline_row(row)
+
+
+def get_baselines(track: str, app_root: Path | None = None) -> dict[str, Any]:
+    """``{active: row | None, history: [rows newest first, active included]}``."""
+    ensure_duel_schema(app_root)
+    with connect(app_root) as conn:
+        rows = conn.execute("SELECT * FROM track_baselines WHERE track = ? ORDER BY id DESC", (track,)).fetchall()
+    items = [_baseline_row(r) for r in rows]
+    return {"active": next((i for i in items if i["active"]), None), "history": items}
