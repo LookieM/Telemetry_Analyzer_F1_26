@@ -8,6 +8,7 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 
+from .channels import FRONT_WHEELS, REAR_WHEELS, WHEELS
 from .garage import garage_from_raw, to_garage
 
 COLUMN_ALIASES: dict[str, list[str]] = {
@@ -30,8 +31,8 @@ COLUMN_ALIASES: dict[str, list[str]] = {
     "drs": ["drs", "DRS"],
 }
 
-# Tyre / corner indexing in SRT: 0=RL, 1=RR, 2=FL, 3=FR (common game convention)
-TYRE_LABELS = ("RL", "RR", "FL", "FR")
+# Tyre / corner indexing in SRT exports: 0=FL, 1=FR, 2=RL, 3=RR (front-first; see channels.WHEELS)
+TYRE_LABELS = WHEELS
 
 # Raw garage channels logged in SRT exports (also persisted in compact Parquet after import).
 # Per-wheel indices are SRT order (0=FL, 1=FR, 2=RL, 3=RR); `telemetry.garage` turns them into the garage setup.
@@ -109,11 +110,11 @@ def _derive_speed(df: pd.DataFrame) -> pd.DataFrame:
 def _derive_helpers(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    if "gforce_X" in df.columns and "gforce_Z" in df.columns:
-        # Lateral often X, longitudinal Z in these dumps — keep magnitude for GG
-        df["g_lat"] = df["gforce_X"]
-        df["g_long"] = df["gforce_Z"]
-        df["g_mag"] = np.sqrt(df["gforce_X"] ** 2 + df["gforce_Z"] ** 2)
+    if "gforce_X" in df.columns and "gforce_Y" in df.columns:
+        # SRT: gforce_X = -longitudinal (positive under braking), gforce_Y = lateral, gforce_Z = vertical.
+        df["g_lat"] = df["gforce_Y"]
+        df["g_long"] = -df["gforce_X"]  # positive = accelerating
+        df["g_mag"] = np.sqrt(df["g_lat"] ** 2 + df["g_long"] ** 2)  # planar (GG circle)
 
     if "throttle" in df.columns and "brake" in df.columns:
         df["coasting"] = (df["throttle"] < 0.02) & (df["brake"] < 0.02)
@@ -122,9 +123,8 @@ def _derive_helpers(df: pd.DataFrame) -> pd.DataFrame:
     if all(f"wheel_slip_ratio_{i}" in df.columns for i in range(4)):
         slips = df[[f"wheel_slip_ratio_{i}" for i in range(4)]]
         df["slip_max"] = slips.abs().max(axis=1)
-        # Live order: 0=RL, 1=RR, 2=FL, 3=FR
-        rear_slip = slips[["wheel_slip_ratio_0", "wheel_slip_ratio_1"]].abs().max(axis=1)
-        front_slip = slips[["wheel_slip_ratio_2", "wheel_slip_ratio_3"]].abs().max(axis=1)
+        front_slip = slips[[f"wheel_slip_ratio_{i}" for i in FRONT_WHEELS]].abs().max(axis=1)
+        rear_slip = slips[[f"wheel_slip_ratio_{i}" for i in REAR_WHEELS]].abs().max(axis=1)
         # Lock-up heuristic under braking (front vs rear matter for bias direction)
         if "brake" in df.columns:
             braking = df["brake"] > 0.28

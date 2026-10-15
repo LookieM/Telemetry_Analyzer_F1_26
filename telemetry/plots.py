@@ -7,6 +7,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+from .channels import WHEELS
+
 
 DARK_LAYOUT = dict(
     template="plotly_white",
@@ -640,7 +642,7 @@ def tyre_temps_plot(lap_df: pd.DataFrame) -> go.Figure:
     x, x_title = _x_axis(lap_df)
     fig = go.Figure()
     colors = {"RL": INK, "RR": ACCENT, "FL": BEST, "FR": MUTED}
-    for i, lab in enumerate(["RL", "RR", "FL", "FR"]):
+    for i, lab in enumerate(WHEELS):
         col = f"tyre_temp_{i}"
         if col in lap_df.columns:
             fig.add_trace(go.Scatter(x=x, y=lap_df[col], name=lab, line=dict(color=colors[lab], width=2)))
@@ -650,12 +652,12 @@ def tyre_temps_plot(lap_df: pd.DataFrame) -> go.Figure:
 
 def tyre_wear_bars(lap_df: pd.DataFrame) -> go.Figure:
     labels, values = [], []
-    for i, lab in enumerate(["RL", "RR", "FL", "FR"]):
+    for i, lab in enumerate(WHEELS):
         col = f"tyre_wear_{i}"
         if col in lap_df.columns:
             labels.append(lab)
             values.append(float(lap_df[col].iloc[-1]) * 100)
-    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=[INK, ACCENT, BEST, MUTED]))
+    fig = go.Figure(go.Bar(x=labels, y=values, marker_color=[{"RL": INK, "RR": ACCENT, "FL": BEST, "FR": MUTED}[lab] for lab in labels]))
     fig.update_layout(**DARK_LAYOUT, title="Tyre wear at end of lap (%)", height=320, yaxis_title="%")
     return fig
 

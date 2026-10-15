@@ -6,10 +6,14 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-# SRT / F1 26 per-wheel index order (same as loader.TYRE_LABELS).
-WHEELS = ("RL", "RR", "FL", "FR")
+# SRT / F1 26 per-wheel index order: every per-wheel array in an export is front-first.
+# The single source of truth; loader, tyres and plots derive from it. (The live UDP order RL, RR, FL, FR
+# lives in telemetria_server/live/engine.py and is converted at the recorder boundary.)
+WHEELS = ("FL", "FR", "RL", "RR")
+FRONT_WHEELS = (0, 1)
+REAR_WHEELS = (2, 3)
 # Indices in car layout reading order: FL FR / RL RR.
-CAR_LAYOUT = (2, 3, 0, 1)
+CAR_LAYOUT = tuple(WHEELS.index(w) for w in ("FL", "FR", "RL", "RR"))
 
 
 @dataclass(frozen=True)
@@ -35,7 +39,7 @@ CHANNELS: tuple[Channel, ...] = (
     Channel("engine_temp", "Engine temp", "°C", "Power unit", aliases=("engineTemperature", "engine_temperature")),
     Channel("g_lat", "Lateral g", "g", "Chassis"),
     Channel("g_long", "Longitudinal g", "g", "Chassis"),
-    Channel("g_vert", "Vertical g", "g", "Chassis", aliases=("gforce_Y", "gForceVertical")),
+    Channel("g_vert", "Vertical g", "g", "Chassis", aliases=("gforce_Z", "gForceVertical")),
     Channel("tyre_temp", "Tyre temp (export)", "°C", "Tyres", per_wheel=True),
     Channel(
         "tyre_surface_temp",
@@ -136,7 +140,7 @@ def _wheel_names(stem: str, i: int) -> tuple[str, ...]:
 
 
 def wheel_columns(df: pd.DataFrame, key: str) -> list[str] | None:
-    """The four per-wheel columns (RL, RR, FL, FR order) for a channel, or None if incomplete."""
+    """The four per-wheel columns (FL, FR, RL, RR order) for a channel, or None if incomplete."""
     ch = _BY_KEY.get(key)
     stems = (key, *(ch.aliases if ch else ()))
     for stem in stems:

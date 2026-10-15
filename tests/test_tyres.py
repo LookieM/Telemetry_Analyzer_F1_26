@@ -52,7 +52,7 @@ def test_unmeasured_compound_sits_between_its_measured_neighbours():
 
 def test_pressure_recommendation_moves_the_cold_set_by_the_hot_error():
     hot = {"RL": 24.0, "RR": 23.8, "FL": 21.6, "FR": 21.6}
-    cold = {0: 23.5, 1: 23.5, 2: 21.0, 3: 21.0}
+    cold = {0: 21.0, 1: 21.0, 2: 23.5, 3: 23.5}  # FL FR RL RR
     rec = pressure_recommendation(hot, cold, TyreTargets(19, 80, 100, hot_front_psi=22.0, hot_rear_psi=23.0)).set_index("Wheel")
     assert rec.loc["RL", "Build-up (psi)"] == pytest.approx(0.5)
     assert rec.loc["RL", "Cold set → (psi)"] == pytest.approx(22.5)
@@ -85,7 +85,7 @@ def test_bahrain_race_pit_losses_and_stints():
     summaries, tbl = summarize_stints(df, summary, session=session)
     assert [s.stint.compound for s in summaries] == [19, 19, 20]
     assert [s.stint.n_laps for s in summaries] == [8, 9, 12]
-    assert all(s.limiting_wheel == "RL" for s in summaries)  # the left-rear eats itself at Bahrain
+    assert all(s.limiting_wheel == "FL" for s in summaries)  # the front-left eats itself at Bahrain (index 0 was mislabelled RL)
     assert {"T_FL", "P_RL", "W_FR", "Twin_RR"} <= set(tbl.columns)
 
 

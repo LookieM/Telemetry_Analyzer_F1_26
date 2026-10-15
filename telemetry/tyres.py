@@ -2,7 +2,7 @@
 Tyre engineering: stints, per-wheel lap data, operating windows, pressures, degradation and the
 per-track compound model the strategy tool runs on.
 
-Wheel index order is the export's: 0=RL, 1=RR, 2=FL, 3=FR (channels.WHEELS).
+Wheel index order is the export's: 0=FL, 1=FR, 2=RL, 3=RR (channels.WHEELS).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .channels import WHEELS, primary_tyre_temp, temp_kind, wheel_columns
+from .channels import FRONT_WHEELS, WHEELS, primary_tyre_temp, temp_kind, wheel_columns
 from .compounds import WET_CODES, Allocation, c_label, get_allocation, is_slick, softness
 from .conditions import _as_state
 from .corners import normalize_track_name
@@ -74,7 +74,7 @@ class TyreTargets:
     source: str = "default"
 
     def hot_target(self, wheel: int) -> float | None:
-        return self.hot_front_psi if wheel in (2, 3) else self.hot_rear_psi
+        return self.hot_front_psi if wheel in FRONT_WHEELS else self.hot_rear_psi
 
 
 def _family(code: int | None) -> str:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .channels import WHEELS
 from .coach_constants import LOCKUP_BRAKE_THRESHOLD
 from .framecache import per_frame
 from .metrics import build_lap_summary, get_lap
@@ -37,7 +38,7 @@ def _temp_balance(lap_df: pd.DataFrame) -> dict | None:
     cols = [f"tyre_temp_{i}" for i in range(4) if f"tyre_temp_{i}" in lap_df.columns]
     if len(cols) < 4:
         return None
-    labels = ["RL", "RR", "FL", "FR"]
+    labels = list(WHEELS)
     temps = {lab: float(lap_df[f"tyre_temp_{i}"].mean()) for i, lab in enumerate(labels)}
     vals = list(temps.values())
     return {

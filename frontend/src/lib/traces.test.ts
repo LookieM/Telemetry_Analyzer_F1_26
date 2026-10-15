@@ -118,11 +118,11 @@ describe("tyre lap trace", () => {
     ch.channels["tyre_wear_0"] = [0.1, 0.2]
     const t = tyreLapTrace(ch, cols, { lo: 90, hi: 105 })
     const temp = t.panes[0]
-    expect(temp.series.map((s) => s.label)).toEqual(["RL", "RR", "FL", "FR", "window lo", "window hi"])
+    expect(temp.series.map((s) => s.label)).toEqual(["FL", "FR", "RL", "RR", "window lo", "window hi"])
     expect(temp.series[4].values).toEqual([90, 90])
     const press = t.panes.find((p) => p.title === "Hot pressure")!
     expect(press.series[0].values[0]).toBeCloseTo(22, 6)
-    expect(press.series[0].color).toBe(WHEEL_COLORS.RL)
+    expect(press.series[0].color).toBe(WHEEL_COLORS.FL)
     const wear = t.panes.find((p) => p.title === "Wear")!
     expect(wear.series[0].values).toEqual([10, 20])
     expect(t.panes[t.panes.length - 1].title).toBe("Speed")

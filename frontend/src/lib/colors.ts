@@ -40,8 +40,8 @@ export const GEAR = "#8A6FD1"
 export const NEUTRAL = "#8A9099"
 export const DELTA = "#E8A317"
 
-/** Wheel order in the data: 0=RL, 1=RR, 2=FL, 3=FR. */
-export const WHEELS = ["RL", "RR", "FL", "FR"] as const
+/** Wheel order in the data (exports are front-first): 0=FL, 1=FR, 2=RL, 3=RR. */
+export const WHEELS = ["FL", "FR", "RL", "RR"] as const
 export type Wheel = (typeof WHEELS)[number]
 export const WHEEL_COLORS: Record<Wheel, string> = { RL: "#2E9E44", RR: "#D7263D", FL: "#3E7CC9", FR: "#E8A317" }
 /** Car layout (front row first). */

@@ -23,7 +23,7 @@ def _axle_temps(df: pd.DataFrame, mask: pd.Series | None = None) -> dict[str, fl
     sl = df.loc[mask] if mask is not None and mask.any() else df
     if sl.empty:
         sl = df
-    rl, rr, fl, fr = [float(sl[c].mean()) for c in cols]
+    fl, fr, rl, rr = [float(sl[c].mean()) for c in cols]  # export order is front-first
     front = (fl + fr) / 2
     rear = (rl + rr) / 2
     return {

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from .channels import WHEELS
 from .coach_constants import COAST_HS_MIN_SPEED_KMH, LOCKUP_BRAKE_THRESHOLD
 from .metrics import align_laps, compute_time_delta, get_lap
 
@@ -339,7 +340,7 @@ def generate_insights(
 
     if all(f"tyre_temp_{i}" in lap_df.columns for i in range(4)):
         temps = [lap_df[f"tyre_temp_{i}"].mean() for i in range(4)]
-        labels = ["RL", "RR", "FL", "FR"]
+        labels = list(WHEELS)
         avg = float(np.mean(temps))
         spread = float(np.max(temps) - np.min(temps))
         hottest = labels[int(np.argmax(temps))]
@@ -369,7 +370,7 @@ def generate_insights(
             Insight(
                 "info",
                 "Tyre wear (end of lap)",
-                " / ".join(f"{lab} {w:.1f}%" for lab, w in zip(["RL", "RR", "FL", "FR"], wears)),
+                " / ".join(f"{lab} {w:.1f}%" for lab, w in zip(WHEELS, wears)),
                 "tyres",
             )
         )
