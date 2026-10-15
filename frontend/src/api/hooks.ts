@@ -26,6 +26,8 @@ import type {
   TrackModel,
   TrackCatalog,
   TyresPayload,
+  GeneratedSetup,
+  TrackProfile,
 } from "./types"
 
 export const useLibraryStats = () => useQuery({ queryKey: ["stats"], queryFn: () => api.get<LibraryStats>("/library/stats") })
@@ -235,3 +237,20 @@ export function useSetBaseline(track: string) {
     onSuccess: (data) => qc.setQueryData(["baseline", track], data),
   })
 }
+
+export const useTrackProfile = (track: string | null) =>
+  useQuery({
+    queryKey: ["track-profile", track],
+    queryFn: () => api.get<TrackProfile>(`/tracks/${encodeURIComponent(track ?? "")}/profile`),
+    enabled: !!track,
+    staleTime: 5 * 60_000,
+  })
+
+/** The generated setup is computed on demand (enable it when the page should show it). */
+export const useGeneratedSetup = (track: string | null, enabled: boolean) =>
+  useQuery({
+    queryKey: ["generated-setup", track],
+    queryFn: () => api.get<GeneratedSetup>(`/tracks/${encodeURIComponent(track ?? "")}/generated-setup`),
+    enabled: !!track && enabled,
+    staleTime: 60_000,
+  })

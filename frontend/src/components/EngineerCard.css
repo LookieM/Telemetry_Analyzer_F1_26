@@ -1,5 +1,5 @@
 /* Engineer card on the Live page: sizes in em of the page's --u so it scales with the portrait monitor. */
-.eg-card { display: flex; flex-direction: column; gap: 0.5em; flex: 0 0 auto; max-height: 36em; overflow-y: auto; }
+.eg-card { display: flex; flex-direction: column; gap: 0.5em; flex: 0 1 auto; min-height: 12em; max-height: 36em; overflow-y: auto; }
 .eg-card .dim { color: var(--text-dim); }
 .eg-head { display: flex; align-items: baseline; gap: 0.7em; }
 .eg-head h3 { margin: 0; }

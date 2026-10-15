@@ -369,7 +369,7 @@ export function LivePage() {
 
           <StrategyCard s={s.strategy} session={s.session} damage={s.damage} />
 
-          <EngineerCard view={s.engineer} />
+          <EngineerCard view={s.engineer} duel={s.duel} />
 
           <section className="lv-card lv-rivalcard">
             <Rivals rows={s.rivals} />

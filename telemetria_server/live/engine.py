@@ -19,6 +19,7 @@ from telemetry.metrics import FUEL_S_PER_KG
 
 from ..udp import srt_columns as cols
 from ..udp import structs
+from .duel import Duel
 from .engineer import PRACTICE, Engineer, EngineerError, EngineerLap
 from .lap_profile import LapProfiler
 from .state import (PID_DAMAGE, PID_EVENT, PID_LAP, PID_PARTICIPANTS, PID_SESSION, PID_SETUP, PID_STATUS,
@@ -173,6 +174,10 @@ class LiveEngine:
         self._eng_lock = threading.Lock()
         self.engineer_save_pending: dict | None = None  # picked up by the server loop and stored off-thread
         self._eng_saved = False
+        # the setup duel is the other live program (one at a time); it shares the engineer's lock
+        self.duel = Duel()
+        self.duel_save_pending: dict | None = None
+        self._duel_saved = False
         # set by the ingest: () -> the running SessionRecorder; without it laps carry no corner profile
         self.recorder_source: Callable[[], Any] | None = None
         self._profiler = LapProfiler(app_root)
@@ -411,6 +416,11 @@ class LiveEngine:
         """Feed lines become live events; a finished program is handed over for storing (caller holds the lock)."""
         for line in self.engineer.drain_feed():
             self._emit("engineer", line["text"])
+        for line in self.duel.drain_feed():
+            self._emit("engineer", line["text"])
+        if self.duel.phase == "done" and not self._duel_saved:
+            self._duel_saved = True
+            self.duel_save_pending = self.duel.result()
         if self.engineer.phase == "done" and not self._eng_saved:
             self._eng_saved = True
             self.engineer_save_pending = self.engineer.result()
@@ -435,7 +445,7 @@ class LiveEngine:
             return None
 
     def _engineer_lap(self, lap: int, time_s: float, valid: bool, fuel_start, fuel_end) -> None:
-        if not self.engineer.active:
+        if not self.engineer.active and not self.duel.active:
             return
         status, dmg = self.s.get(PID_STATUS), self.s.get(PID_DAMAGE)
         st = status["m_carStatusData"][self.s.player] if status is not None else None
@@ -450,21 +460,36 @@ class LiveEngine:
             fresh_set=bool(idx is not None and self._set_first_age.get(idx, age0) == 0),
             tyre_age_laps=age0,
             wear_max_pct=float(max(dmg["m_carDamageData"][self.s.player]["m_tyresWear"])) if dmg is not None else None,
+            wear_avg_pct=float(np.mean(dmg["m_carDamageData"][self.s.player]["m_tyresWear"])) if dmg is not None else None,
             setup=self._player_setup(), profile=self._lap_profile(lap))
         with self._eng_lock:
-            self.engineer.on_lap(el)
+            if self.engineer.active:
+                self.engineer.on_lap(el)
+            if self.duel.active:
+                self.duel.on_lap(el)
             self._eng_pump()
 
     def _engineer_tick(self, me, sess) -> None:
-        if not self.engineer.active:
+        if not self.engineer.active and not self.duel.active:
             return
         with self._eng_lock:
-            if cols.session_type_name(int(sess["m_sessionType"])) not in PRACTICE:
-                self.engineer.stop()
-            else:
-                self.engineer.on_tyre_sets(self._tyre_sets())
-                self.engineer.on_garage(int(me["m_driverStatus"]) == 0, self.s.last_t)
-                self.engineer.on_tick(self.s.last_t, int(sess["m_sessionTimeLeft"]) or None)
+            practice = cols.session_type_name(int(sess["m_sessionType"])) in PRACTICE
+            in_garage = int(me["m_driverStatus"]) == 0
+            if self.engineer.active:
+                if not practice:
+                    self.engineer.stop()
+                else:
+                    self.engineer.on_tyre_sets(self._tyre_sets())
+                    self.engineer.on_garage(in_garage, self.s.last_t)
+                    self.engineer.on_tick(self.s.last_t, int(sess["m_sessionTimeLeft"]) or None)
+            if self.duel.active:
+                if not practice:
+                    self.duel.stop()
+                else:
+                    self.duel.on_tyre_sets(self._tyre_sets())
+                    # the setup is read on the tick the car leaves the garage
+                    self.duel.on_garage(in_garage, self.s.last_t, self._player_setup() if (self.duel.in_garage and not in_garage) else None)
+                    self.duel.on_tick(self.s.last_t, int(sess["m_sessionTimeLeft"]) or None)
             self._eng_pump()
 
     def _end_engineer(self) -> None:
@@ -472,9 +497,13 @@ class LiveEngine:
         with self._eng_lock:
             if self.engineer.active:
                 self.engineer.stop()
+            if self.duel.active:
+                self.duel.stop()
             self._eng_pump()
             self.engineer = Engineer()
             self._eng_saved = False
+            self.duel = Duel()
+            self._duel_saved = False
 
     def engineer_models(self, track: str) -> tuple[float, dict[int, float]]:
         """Library fuel effect and per-compound degradation for the track (heavy: call outside the lock)."""
@@ -502,6 +531,8 @@ class LiveEngine:
         settled = engineer_log.settled_for(track, self.root) if self.root is not None else {}
         fuel_k, deg = self.engineer_models(track)
         with self._eng_lock:
+            if self.duel.active:
+                raise EngineerError("A setup duel is running: stop it first")
             self.engineer.on_tyre_sets(self._tyre_sets())
             view = self.engineer.start(program, baseline, track, stype, wet, s.last_t, minutes,
                                        int(sess["m_sessionTimeLeft"]) or None, settled, fuel_k, deg)
@@ -519,6 +550,56 @@ class LiveEngine:
     def _engineer_view(self) -> dict | None:
         with self._eng_lock:
             return self.engineer.view() if self.engineer.phase != "idle" else None
+
+    # -- setup duel adapter (same shape as the engineer's) -------------------------------------
+    def duel_start(self, n: int, names: list[str] | None = None) -> dict:
+        s = self.s
+        sess, lapd, stat = s.get(PID_SESSION), s.get(PID_LAP), s.get(PID_STATUS)
+        if sess is None or lapd is None:
+            raise EngineerError("No live session data yet")
+        track = cols.track_name(int(sess["m_trackId"]))
+        comp = int(stat["m_carStatusData"][s.player]["m_actualTyreCompound"]) if stat is not None else None
+        wet = int(sess["m_weather"]) >= 3 or (comp is not None and comp in compounds.WET_CODES)
+        stype = cols.session_type_name(int(sess["m_sessionType"]))
+        fuel_k, deg = self.engineer_models(track)
+        with self._eng_lock:
+            if self.engineer.active:
+                raise EngineerError("The engineer is running: stop it first")
+            self.duel.on_tyre_sets(self._tyre_sets())
+            view = self.duel.start(n, names, track, stype, wet, s.last_t, int(sess["m_sessionTimeLeft"]) or None,
+                                   fuel_k, deg)
+            self._duel_saved = False
+            self._eng_pump()
+        return view
+
+    def duel_command(self, name: str, *args, **kwargs) -> dict:
+        """Run a Duel command (rank, confirm, skip_contestant, stop) and return the new view. The tyre model for the
+        ranking is built before taking the lock (it is slow)."""
+        if name == "rank":
+            with self._eng_lock:
+                compound, track = self.duel.compound, self.duel.track
+            plan_time, race_laps = self._duel_plan(track, compound)
+            kwargs = {**kwargs, "plan_time": plan_time, "race_laps": race_laps}
+        with self._eng_lock:
+            view = getattr(self.duel, name)(*args, **kwargs)
+            self._eng_pump()
+        return view
+
+    def _duel_plan(self, track: str, compound: int | None):
+        if self.root is None or not track:
+            return None, None
+        try:
+            from .. import duel_library
+
+            plan_time, race_laps, _ = duel_library.wear_plan_time(duel_library.track_name(track), "dry", compound, self.root)
+            return plan_time, race_laps
+        except Exception:
+            log.exception("duel: no tyre model for %s", track)
+            return None, None
+
+    def _duel_view(self) -> dict | None:
+        with self._eng_lock:
+            return self.duel.view() if self.duel.phase != "idle" else None
 
     def _lap_valid(self, lap: int) -> bool:
         hist = self.s.history.get(self.s.player)
@@ -547,6 +628,7 @@ class LiveEngine:
         out["rivals"] = self._rivals(lapd, sess)
         out["strategy"] = self.strategy
         out["engineer"] = self._engineer_view()
+        out["duel"] = self._duel_view()
         return out
 
     def _session(self, sess, me) -> dict:

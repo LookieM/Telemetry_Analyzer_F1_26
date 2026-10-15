@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02, 03
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure duel module with view()/result() and commands; practice + dry only
 - [ ] Engine routes to the active program; /api/live/duel/* endpoints; 409 when the other program runs; snapshot key `duel`

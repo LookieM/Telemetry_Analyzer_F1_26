@@ -759,3 +759,125 @@ export type BaselineRequest =
   | { session_id: number; name?: string }
   | { setup: Record<string, number>; source: "manual" | "generator" | "engineer"; name?: string; meta?: Record<string, unknown> }
   | { restore_id: number }
+
+// ---------------------------------------------------------------- setup generator
+
+export type Confidence = "low" | "medium" | "high"
+
+export interface TrackProfile {
+  track: string | null
+  source: "driven" | "catalogue"
+  lap_length_m: number
+  reverse_of: string | null
+  slow_frac: number
+  medium_frac: number
+  fast_frac: number
+  full_throttle_frac: number
+  heavy_braking_zones: number
+  heavy_braking_estimated: boolean
+  corner_count: number
+}
+
+export interface GeneratedEvidence {
+  track: string
+  source: "baseline" | "settled" | "duel"
+  /** the value transferred to this track (canonical garage units, Pa for pressures; see the entry's `display` for the scale) */
+  value: number
+  /** offset from the source track's typical setup that was transferred; null for an absolute value */
+  offset: number | null
+  /** the value as found on the source track */
+  found: number
+  own: boolean
+  similarity: number
+  weight: number
+  name: string | null
+}
+
+export interface GeneratedEntry {
+  value: number
+  display: number
+  unit: string
+  label: string
+  source: "blend" | "prior" | "meta" | "consumption"
+  confidence: Confidence
+  weight: number
+  prior: number | null
+  evidence: GeneratedEvidence[]
+  note?: string
+}
+
+export interface GeneratedDisplayItem extends GarageValue {
+  confidence: Confidence
+  source: GeneratedEntry["source"]
+}
+
+export interface GeneratedFuel {
+  quali_kg: number
+  race_kg: number
+  kg_per_lap: number
+  race_laps: number
+  source: string
+}
+
+export interface GeneratedSetup {
+  track: string
+  profile: TrackProfile
+  setup: Record<string, GeneratedEntry>
+  display: GeneratedDisplayItem[]
+  overall_confidence: Confidence
+  group_confidence: { aero: Confidence; mechanical: Confidence }
+  first_test: { key: string; label: string; confidence: Confidence; text: string } | null
+  fuel: GeneratedFuel
+  prior_source: string
+  evidence_tracks: string[]
+}
+
+/* ---- Live setup duel (telemetria_server/live/duel.py `view()`) ---- */
+
+export type LiveDuelPhase = "idle" | "running" | "review" | "done"
+export type LiveDuelStatus = "waiting" | "driving" | "done" | "skipped"
+
+export interface LiveDuelContestant {
+  key: string
+  label: string
+  name: string | null
+  assigned: boolean
+  on_car: boolean
+  counted: number
+  target: number
+  raw: number
+  skipped: boolean
+  status: LiveDuelStatus
+  last_s: number | null
+  best_s: number | null
+  laps: { lap: number; time_s: number | null }[]
+}
+
+export interface LiveDuelRanking extends DuelRanking {
+  proposed: string
+}
+
+export interface LiveDuelView {
+  phase: LiveDuelPhase
+  track: string
+  session_type: string
+  in_garage: boolean
+  n: number
+  target: number
+  min_laps: number
+  max_laps: number
+  compound: number | null
+  compound_label: string | null
+  contestants: LiveDuelContestant[]
+  current: string | null
+  next: string | null
+  instruction: string
+  detected: { key: string | null; warning: string | null }
+  tyre_hint: string | null
+  question: { pending: boolean; keys: string[] }
+  feel: { order: string[]; note: string | null } | null
+  ranking: LiveDuelRanking | null
+  winner: string | null
+  stop_reason: string | null
+  feed: { t: number; text: string }[]
+}

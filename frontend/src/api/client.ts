@@ -1,5 +1,5 @@
 /** Thin fetch wrapper: JSON in / out, errors carry the server's `detail`. */
-import type { BaselinePayload, BaselineRequest, EngineerAnswer, EngineerView } from "./types"
+import type { BaselinePayload, BaselineRequest, EngineerAnswer, EngineerView, LiveDuelView } from "./types"
 
 export class ApiError extends Error {
   constructor(
@@ -44,6 +44,15 @@ export const api = {
 }
 
 /** Live race engineer commands; each returns the new engineer view (409 = refused, `detail` is the reason). */
+/** Live setup duel commands; each returns the new duel view (409 = refused, `detail` is the reason). */
+export const duelApi = {
+  start: (n: 2 | 3, names: string[]) => api.send<LiveDuelView>("POST", "/live/duel/start", { n, names }),
+  rank: (order: string[], note?: string) => api.send<LiveDuelView>("POST", "/live/duel/rank", note ? { order, note } : { order }),
+  confirm: (winner: string) => api.send<LiveDuelView>("POST", "/live/duel/confirm", { winner }),
+  skip: () => api.send<LiveDuelView>("POST", "/live/duel/skip"),
+  stop: () => api.send<LiveDuelView>("POST", "/live/duel/stop"),
+}
+
 export const engineerApi = {
   start: (program: "short" | "full", minutes?: number) => api.send<EngineerView>("POST", "/live/engineer/start", minutes ? { program, minutes } : { program }),
   answer: (a: EngineerAnswer) => api.send<EngineerView>("POST", "/live/engineer/answer", a),

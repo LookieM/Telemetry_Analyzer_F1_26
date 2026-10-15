@@ -1,12 +1,14 @@
 /** Live page: the race engineer card (optometrist-style setup test). All decisions are server-side; this renders the view. */
 import { useState } from "react"
 import { ApiError, baselineApi, engineerApi } from "../api/client"
-import type { EngineerHistoryRow, EngineerResult, EngineerVariant, EngineerView } from "../api/types"
+import type { EngineerHistoryRow, EngineerResult, EngineerVariant, EngineerView, LiveDuelView } from "../api/types"
 import { engineerBaselineName, offerSummary } from "../lib/baseline"
 import { MAX_TAGS, PHASE_LABEL, buildAnswer, commandError, confidenceLabel, cornerRowLine, engineerPanel, fmtBudget, fmtDelta, stopwatchLine, tagCheckLine, tagLabel, toggleTag, validateAnswer, variantValue } from "../lib/engineer"
+import { duelShown } from "../lib/duelLive"
+import { DuelPanel, DuelStart } from "./DuelPanel"
 import "./EngineerCard.css"
 
-type Run = (fn: () => Promise<EngineerView>) => Promise<void>
+type Run = (fn: () => Promise<unknown>) => Promise<void>
 
 function Start({ run, busy }: { run: Run; busy: boolean }) {
   return (
@@ -20,6 +22,7 @@ function Start({ run, busy }: { run: Run; busy: boolean }) {
           Full<small>≈ 50 min · 3 parameters</small>
         </button>
       </div>
+      <DuelStart run={run} busy={busy} />
     </div>
   )
 }
@@ -314,7 +317,7 @@ function History({ rows, settled }: { rows: EngineerHistoryRow[]; settled: Engin
   )
 }
 
-export function EngineerCard({ view }: { view: EngineerView | null | undefined }) {
+export function EngineerCard({ view, duel }: { view: EngineerView | null | undefined; duel?: LiveDuelView | null }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const run: Run = async (fn) => {
@@ -331,6 +334,29 @@ export function EngineerCard({ view }: { view: EngineerView | null | undefined }
   const panel = engineerPanel(view)
   const v = view && view.phase !== "idle" ? view : null
   const active = v != null && v.phase !== "done"
+
+  if (duelShown(duel) && !active) {
+    return (
+      <section className="lv-card eg-card panel-duel" data-testid="engineer-card">
+        <div className="eg-head">
+          <h3>Setup duel</h3>
+          <span className="eg-phase" data-testid="dl-phase">
+            {duel.phase === "running" ? "Driving" : duel.phase === "review" ? "Ranking" : "Finished"}
+          </span>
+          <span className="eg-param">
+            {duel.n} setups <span className="dim">· {duel.track}</span>
+          </span>
+        </div>
+        <DuelPanel v={duel} run={run} busy={busy} />
+        {duel.phase === "done" && <Start busy={busy} run={run} />}
+        {error && (
+          <div className="eg-error" role="alert" data-testid="eg-error">
+            {error}
+          </div>
+        )}
+      </section>
+    )
+  }
 
   return (
     <section className={`lv-card eg-card panel-${panel}`} data-testid="engineer-card">

@@ -43,6 +43,7 @@ class Lap:
     fresh_set: bool = False
     tyre_age_laps: int = 0
     wear_max_pct: float | None = None
+    wear_avg_pct: float | None = None  # mean over the four tyres (the duel's wear rate; the library uses the same)
     setup: dict[str, float] = field(default_factory=dict)
     profile: dict | None = None  # optional per-lap analysis payload; this module never looks inside
 

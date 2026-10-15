@@ -64,6 +64,26 @@ class RevertIn(BaseModel):
     accept: bool
 
 
+class DuelStartIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    n: Literal[2, 3]
+    names: list[str] = Field(default=[], max_length=3)
+
+
+class DuelRankIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    order: list[str] = Field(min_length=2, max_length=3)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class DuelConfirmIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    winner: str = Field(min_length=1, max_length=1)
+
+
 def _command(fn, *args, **kwargs) -> dict:
     try:
         return to_jsonable(fn(*args, **kwargs))
@@ -104,6 +124,31 @@ def engineer_next_phase(ing=Depends(live_ingest)):
 @router.post("/api/live/engineer/stop")
 def engineer_stop(ing=Depends(live_ingest)):
     return _command(ing.engine.engineer_command, "stop")
+
+
+@router.post("/api/live/duel/start")
+def duel_start(body: DuelStartIn, ing=Depends(live_ingest)):
+    return _command(ing.engine.duel_start, body.n, body.names)
+
+
+@router.post("/api/live/duel/rank")
+def duel_rank(body: DuelRankIn, ing=Depends(live_ingest)):
+    return _command(ing.engine.duel_command, "rank", body.order, body.note)
+
+
+@router.post("/api/live/duel/confirm")
+def duel_confirm(body: DuelConfirmIn, ing=Depends(live_ingest)):
+    return _command(ing.engine.duel_command, "confirm", body.winner)
+
+
+@router.post("/api/live/duel/skip")
+def duel_skip(ing=Depends(live_ingest)):
+    return _command(ing.engine.duel_command, "skip_contestant")
+
+
+@router.post("/api/live/duel/stop")
+def duel_stop(ing=Depends(live_ingest)):
+    return _command(ing.engine.duel_command, "stop")
 
 
 @router.get("/api/live/status")

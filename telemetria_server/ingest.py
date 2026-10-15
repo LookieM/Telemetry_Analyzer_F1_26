@@ -208,6 +208,9 @@ class UdpIngest:
                 if self.engine.engineer_save_pending is not None:
                     result, self.engine.engineer_save_pending = self.engine.engineer_save_pending, None
                     self._spawn(self._store_engineer(result))
+                if self.engine.duel_save_pending is not None:
+                    result, self.engine.duel_save_pending = self.engine.duel_save_pending, None
+                    self._spawn(self._store_duel(result))
                 if self.engine.strategy_dirty and (strat_task is None or strat_task.done()):
                     strat_task = asyncio.create_task(asyncio.to_thread(self.engine.update_strategy))
                 msgs = self.engine.pop_events()
@@ -241,6 +244,15 @@ class UdpIngest:
             log.info("Engineer test stored for %s", result.get("track"))
         except Exception:
             log.exception("could not store the engineer test")
+
+    async def _store_duel(self, result: dict) -> None:
+        from .live.duel_persist import store_live_duel
+
+        try:
+            duel_id = await asyncio.to_thread(store_live_duel, result, self.cfg.app_root)
+            log.info("Setup duel stored for %s (id %s, winner %s)", result.get("track"), duel_id, result.get("winner"))
+        except Exception:
+            log.exception("could not store the setup duel")
 
     async def _store_game_tyres(self, payload: dict) -> None:
         from telemetry.compounds import save_game_tyres

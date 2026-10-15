@@ -1,6 +1,6 @@
 /** Live view: message types, delta trace buffer and the WebSocket hook. */
 import { useEffect, useRef, useState } from "react"
-import type { EngineerView } from "../api/types"
+import type { EngineerView, LiveDuelView } from "../api/types"
 
 export type WheelStatus = "cold" | "ok" | "hot"
 export interface LiveWheel {
@@ -106,6 +106,8 @@ export interface LiveSnapshot {
   strategy: LiveStrategy | null
   /** Race engineer view; null/absent while no program runs. */
   engineer?: EngineerView | null
+  /** Setup duel view; null/absent while no duel runs. */
+  duel?: LiveDuelView | null
 }
 export interface LiveStatus {
   type: "status"

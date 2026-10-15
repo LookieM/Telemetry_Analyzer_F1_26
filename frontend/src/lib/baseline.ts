@@ -12,8 +12,8 @@ export function valueText(v: Pick<GarageValue, "value" | "unit">): string {
 }
 
 /** Consecutive values of the same group, in the given order. */
-export function groupValues(items: GarageValue[]): { group: string; items: GarageValue[] }[] {
-  const out: { group: string; items: GarageValue[] }[] = []
+export function groupValues<T extends GarageValue>(items: T[]): { group: string; items: T[] }[] {
+  const out: { group: string; items: T[] }[] = []
   for (const it of items) {
     const last = out[out.length - 1]
     if (last && last.group === it.group) last.items.push(it)

@@ -4,7 +4,7 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Pure estimator + evidence collection; GET /api/tracks/{track}/generated-setup
 - [ ] Make baseline with source "generator" (stores per-parameter confidence)

@@ -126,7 +126,8 @@
 .lv-events .ev-damage { border-color: var(--bad); color: var(--bad); }
 
 /* damage */
-.lv-damage { display: flex; flex-direction: column; gap: 0.35em; }
+.lv-damage { display: flex; flex-direction: column; gap: 0.35em; flex-shrink: 0; }
+.lv-strategy { flex-shrink: 0; }  /* a tall engineer / duel card scrolls inside instead of squashing these */
 .lv-damage.ok { flex-direction: row; align-items: baseline; gap: 1em; }
 .lv-damage.ok h3 { margin: 0; }
 .lv-damage.box { border-color: var(--bad); background: rgba(215, 38, 61, 0.14); }

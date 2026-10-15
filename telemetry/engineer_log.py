@@ -70,3 +70,14 @@ def list_tests(track: str | None = None, app_root: Path | None = None) -> list[d
         rows = conn.execute("SELECT * FROM engineer_tests" + (" WHERE track = ?" if track else "") + " ORDER BY id DESC",
                             (track,) if track else ()).fetchall()
     return [{**dict(r), "result": json.loads(r["result_json"])} for r in rows]
+
+
+def all_settled(app_root: Path | None = None) -> dict[str, dict[str, tuple[float, str]]]:
+    """Every settled value in the library as ``{track: {garage key: (value, updated_at)}}``."""
+    ensure_engineer_schema(app_root)
+    with connect(app_root) as conn:
+        rows = conn.execute("SELECT track, param, value, updated_at FROM engineer_settled").fetchall()
+    out: dict[str, dict[str, tuple[float, str]]] = {}
+    for r in rows:
+        out.setdefault(r["track"], {})[r["param"]] = (float(r["value"]), str(r["updated_at"]))
+    return out

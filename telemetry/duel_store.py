@@ -95,6 +95,14 @@ def get_duel(duel_id: int, app_root: Path | None = None) -> dict[str, Any] | Non
     return {"id": row["id"], "track": row["track"], "mode": row["mode"], "started_at": row["started_at"], "result": json.loads(row["result_json"])}
 
 
+def list_duels(app_root: Path | None = None) -> list[dict[str, Any]]:
+    """Every stored duel, newest first (same shape as ``get_duel``)."""
+    ensure_duel_schema(app_root)
+    with connect(app_root) as conn:
+        rows = conn.execute("SELECT * FROM duels ORDER BY id DESC").fetchall()
+    return [{"id": r["id"], "track": r["track"], "mode": r["mode"], "started_at": r["started_at"], "result": json.loads(r["result_json"])} for r in rows]
+
+
 # --------------------------------------------------------------------------- track baselines
 
 

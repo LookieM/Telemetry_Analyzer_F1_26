@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react"
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
-import { useNameSetup, useRunDuel, useSetBaseline, useTrackBaseline, useTrackCatalog, useTrackSetups } from "../api/hooks"
-import type { BaselinePayload, BaselineRequest, DuelContestant, DuelResult, SetupCandidate, SetupRunRow } from "../api/types"
+import { useGeneratedSetup, useNameSetup, useRunDuel, useSetBaseline, useTrackBaseline, useTrackCatalog, useTrackProfile, useTrackSetups } from "../api/hooks"
+import type { BaselinePayload, BaselineRequest, DuelContestant, DuelResult, GeneratedSetup, SetupCandidate, SetupRunRow, TrackProfile } from "../api/types"
 import { DataTable, ErrorBox, Loading, Panel, type Column } from "../components/ui"
 import { copyText, copyToClipboard, groupValues, sourceLabel, valueText } from "../lib/baseline"
+import { confidenceClass, confidenceText, evidenceItemText, evidenceText, generatedBaselineRequest, profileRows, profileSourceLabel } from "../lib/generator"
 import { balanceCell, balanceDistance, canRank, gapVsLeader, pickHint, setupLabel, togglePick, verdict, wearText } from "../lib/duel"
 import { fmt, formatDate, formatLapTime } from "../lib/format"
 import "./Setups.css"
@@ -147,6 +148,123 @@ function BaselineCard({ track, baseline, loading, error, saveError, onRestore }:
   )
 }
 
+function ProfilePanel({ profile, loading, error }: { profile: TrackProfile | undefined; loading: boolean; error: unknown }) {
+  return (
+    <Panel title="Track profile" testId="profile-panel" actions={profile && <span className="tag" data-testid="profile-source">{profileSourceLabel(profile)}</span>}>
+      {loading && <Loading what="Reading the track…" />}
+      {error != null && <ErrorBox error={error} />}
+      {profile && (
+        <>
+          <dl className="profile-rows" data-testid="profile-rows">
+            {profileRows(profile).map((r) => (
+              <div key={r.label} className="baseline-row">
+                <dt>{r.label}</dt>
+                <dd className="mono">{r.text}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="note">
+            {profile.source === "driven"
+              ? "Measured on your best clean lap of this track (corners and full-throttle distance)."
+              : "No lap of this track in the library: estimated from the catalogue's corner zones, so treat it as rough."}{" "}
+            Tracks with a similar profile share their setup results.
+          </p>
+        </>
+      )}
+    </Panel>
+  )
+}
+
+function GeneratedRow({ item, entry }: { item: GeneratedSetup["display"][number]; entry: GeneratedSetup["setup"][string] }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="gen-row-wrap">
+      <button className="gen-row" aria-expanded={open} onClick={() => setOpen((v) => !v)} data-testid={`gen-row-${item.key}`}>
+        <span className="gen-label">{item.label}</span>
+        <span className="mono">{valueText(item)}</span>
+        <span className={`badge ${confidenceClass(entry.confidence)}`} data-testid={`gen-badge-${item.key}`}>
+          {confidenceText(entry)}
+        </span>
+      </button>
+      {open && (
+        <div className="gen-evidence" data-testid={`gen-evidence-${item.key}`}>
+          <p>{evidenceText(entry)}</p>
+          {entry.note && <p className="warn-text">{entry.note}</p>}
+          {entry.evidence.length > 0 && (
+            <ul>
+              {entry.evidence.map((e) => (
+                <li key={`${e.track}-${e.source}-${e.value}`}>{evidenceItemText(entry, e)}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GeneratedCard({ track, hasBaseline, onClose, onBaseline, saveError }: { track: string; hasBaseline: boolean; onClose: () => void; onBaseline: MakeBaseline; saveError: unknown }) {
+  const gen = useGeneratedSetup(track, true)
+  const g = gen.data
+  return (
+    <Panel
+      title="Generated setup"
+      testId="generated-card"
+      actions={
+        <>
+          {hasBaseline && (
+            <button className="ghost" onClick={onClose} data-testid="hide-generated">
+              Hide generated
+            </button>
+          )}
+          {g && (
+            <button className="primary" onClick={() => onBaseline(generatedBaselineRequest(g))} data-testid="make-generated-baseline">
+              Make baseline
+            </button>
+          )}
+        </>
+      }
+    >
+      {gen.isLoading && <Loading what="Working out a starting setup…" />}
+      {gen.isError && <ErrorBox error={gen.error} />}
+      {saveError != null && <ErrorBox error={saveError} />}
+      {g && (
+        <>
+          <p className="baseline-meta" data-testid="gen-summary">
+            <span>Overall confidence</span>
+            <span className={`badge ${confidenceClass(g.overall_confidence)}`} data-testid="gen-overall">
+              {g.overall_confidence === "low" && g.evidence_tracks.length === 0 ? "Low – prior only" : g.overall_confidence}
+            </span>
+            <span className="dim">
+              aero {g.group_confidence.aero} · mechanical {g.group_confidence.mechanical}
+            </span>
+            <span className="dim">{g.evidence_tracks.length > 0 ? `from ${g.evidence_tracks.slice(0, 4).join(", ")}${g.evidence_tracks.length > 4 ? "…" : ""}` : `typical-setup table (${g.prior_source}) only`}</span>
+          </p>
+          {g.first_test && (
+            <p className="first-test" data-testid="gen-first-test">
+              <b>{g.first_test.text}.</b> It is the one among wings, diff and anti-roll bars the evidence backs least.
+            </p>
+          )}
+          <p className="note" data-testid="gen-fuel">
+            Fuel: {g.fuel.quali_kg} kg for quali (game minimum), {g.fuel.race_kg} kg for the race ({g.fuel.kg_per_lap.toFixed(2)} kg/lap × {g.fuel.race_laps} laps + 1; {g.fuel.source}). The setup carries the race fuel.
+          </p>
+          <div className="baseline-groups" data-testid="gen-values">
+            {groupValues(g.display).map((grp) => (
+              <div key={grp.group} className="baseline-group">
+                <h4>{grp.group}</h4>
+                {grp.items.map((it) => (
+                  <GeneratedRow key={it.key} item={it} entry={g.setup[it.key]} />
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="note">Click a value to see where it came from. Camber stays at the meta; values are snapped to the garage steps and the suspension is kept coherent.</p>
+        </>
+      )}
+    </Panel>
+  )
+}
+
 function ResultTable({ result, onBaseline }: { result: DuelResult; onBaseline: MakeBaseline }) {
   const r = result.ranking
   if (!r) return null
@@ -255,10 +373,17 @@ export function SetupsPage() {
   const setups = useTrackSetups(track)
   const baseline = useTrackBaseline(track)
   const setBaseline = useSetBaseline(track)
+  const profile = useTrackProfile(track)
   const [picked, setPicked] = useState<string[]>([])
-  useEffect(() => setPicked([]), [track])
+  const [showGenerated, setShowGenerated] = useState(false)
+  useEffect(() => {
+    setPicked([])
+    setShowGenerated(false)
+  }, [track])
+  const hasBaseline = !!baseline.data?.active
+  const generatedOn = (!!baseline.data && !hasBaseline) || showGenerated
 
-  const raced = (catalog.data?.tracks ?? []).filter((t) => t.sessions > 0)
+  const all = catalog.data?.tracks ?? []
   const list = setups.data?.setups ?? []
 
   return (
@@ -268,21 +393,32 @@ export function SetupsPage() {
         <label className="field inline">
           Track
           <select value={track} onChange={(e) => navigate(`/track/${encodeURIComponent(e.target.value)}/setups`)} aria-label="Track">
-            {!raced.some((t) => t.track === track) && <option value={track}>{track}</option>}
-            {raced.map((t) => (
+            {!all.some((t) => t.track === track) && <option value={track}>{track}</option>}
+            {all.map((t) => (
               <option key={t.track} value={t.track}>
                 {t.track}
+                {t.sessions > 0 ? ` (${t.sessions})` : ""}
               </option>
             ))}
           </select>
         </label>
       </div>
       <BaselineCard track={track} baseline={baseline.data} loading={baseline.isLoading} error={baseline.error} saveError={setBaseline.error} onRestore={(id) => setBaseline.mutate({ restore_id: id })} />
+      {hasBaseline && !showGenerated && (
+        <p className="note">
+          <button className="ghost" onClick={() => setShowGenerated(true)} data-testid="show-generated">
+            Show generated setup
+          </button>{" "}
+          A starting setup computed from similar tracks, for comparison with this baseline.
+        </p>
+      )}
+      {generatedOn && <GeneratedCard track={track} hasBaseline={hasBaseline} onClose={() => setShowGenerated(false)} onBaseline={(b) => setBaseline.mutate(b)} saveError={setBaseline.error} />}
+      <ProfilePanel profile={profile.data} loading={profile.isLoading} error={profile.error} />
       <Panel title="Setups driven here" testId="setup-list">
         {setups.isLoading && <Loading what="Reading the track's runs…" />}
         {setups.isError && <ErrorBox error={setups.error} />}
         {setups.data && list.length === 0 && <p className="note">No setups driven on this track in the library yet.</p>}
-        {list.length > 0 && <p className="note">Distinct mechanical setups (fuel and tyre pressures do not count). Tick two or three to rank them, click a name to rename.</p>}
+        {list.length > 0 && <p className="note">Distinct mechanical setups (fuel does not count; different tyre pressures make a separate setup). Tick two or three to rank them, click a name to rename.</p>}
         {list.map((s) => (
           <SetupCard key={s.fingerprint} setup={s} track={track} picked={picked.includes(s.fingerprint)} onToggle={() => setPicked((p) => togglePick(p, s.fingerprint))} onBaseline={(b) => setBaseline.mutate(b)} />
         ))}

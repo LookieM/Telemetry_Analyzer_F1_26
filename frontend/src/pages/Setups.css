@@ -116,3 +116,17 @@ a.button:hover {
   gap: 8px;
   padding: 3px 0;
 }
+
+.profile-rows { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 0 18px; }
+.profile-rows .baseline-row dt, .profile-rows .baseline-row dd { margin: 0; }
+.badge { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); white-space: nowrap; }
+.badge.good { color: var(--good); border-color: var(--good); }
+.badge.warn { color: var(--warn); border-color: var(--warn); }
+.badge.bad { color: var(--bad); border-color: var(--bad); }
+.first-test { margin: 0 0 6px; }
+.gen-row-wrap { border-bottom: 1px dotted var(--border); }
+.gen-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 8px; width: 100%; padding: 2px 0; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.gen-row:hover { background: var(--band); }
+.gen-evidence { padding: 2px 0 6px 8px; font-size: 0.85rem; color: var(--text-dim); }
+.gen-evidence p { margin: 0 0 3px; }
+.gen-evidence ul { margin: 0; padding-left: 16px; }

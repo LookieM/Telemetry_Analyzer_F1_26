@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from telemetry import duel_store
 from telemetry.corners import normalize_track_name
 
-from .. import duel_library, track_baseline
+from .. import duel_library, setup_generation, track_baseline
 from ..serialization import to_jsonable
 from ._common import root_of
 
@@ -77,3 +77,21 @@ def set_baseline(track: str, body: BaselineBody, request: Request) -> Any:
         return to_jsonable(track_baseline.set_from(_track(track), body.model_dump(exclude_none=True), root_of(request)))
     except track_baseline.BaselineError as exc:
         raise HTTPException(exc.status, exc.message) from exc
+
+
+@router.get("/tracks/{track}/generated-setup")
+def generated_setup(track: str, request: Request) -> Any:
+    try:
+        return to_jsonable(setup_generation.generated_setup(_track(track), root_of(request)))
+    except setup_generation.UnknownTrack as exc:
+        raise HTTPException(404, f"{_track(track)} is not in the track catalogue") from exc
+
+
+@router.get("/tracks/{track}/profile")
+def track_profile_route(track: str, request: Request) -> Any:
+    from telemetry.track_profile import track_profile
+
+    try:
+        return to_jsonable(track_profile(_track(track), root_of(request)))
+    except KeyError as exc:
+        raise HTTPException(404, f"{_track(track)} is not in the track catalogue") from exc
