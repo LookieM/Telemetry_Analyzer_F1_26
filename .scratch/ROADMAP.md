@@ -1,9 +1,11 @@
 # Setup-engineer roadmap
 
-Agreed 2026-10-14 (grilling session). Each step: `/mattpocock-skills:to-spec` → `/mattpocock-skills:to-tickets` → `/mattpocock-skills:implement`. Local git only, never push.
+Agreed 2026-10-14 (grilling session). Each step: spec → tickets → implement. Local git only, never push.
 
 1. **Setup reading fix** — done (`2a33995`). Spec: `live-engineer/spec.md`.
-2. **Live engineer (optometrist test in practice)** — backend done (`2247f35`); Engineer card on the Live page next. Spec: `live-engineer/spec.md`.
-3. **Wheel order + g-forces + lap/corner views** — front-first wheel fix (tyre temps/pressures/wear, lock-ups, hot pressure targets, frontend WHEELS), g-force axes, lap comparison and corner views in the React app, corner/phase-level A/B for the engineer.
-4. **Setup duel** — 2–3 internet setups, 3–5 laps each, ranked on your pace, wear and balance; the winner becomes the track baseline.
-5. **Computing a setup from scratch** — last, once enough A/B results exist.
+2. **Live engineer (optometrist test in practice)** — done (backend `2247f35`, Engineer card `c06a625`). Spec: `live-engineer/spec.md`.
+3. **Wheel order + g-forces + lap/corner views** — done 2026-10-15 (`c1a373e` … `24fe8c6`). Spec + tickets: `corners-and-wheels/`.
+4. **Setup duel** — done 2026-10-15 (`a24b7aa`, `24fe8c6`, `9f2f9b1`, `d56ee1e`): offline on the Setups page, live in the Engineer card, track baseline. Spec + tickets: `setup-duel/`.
+5. **Computing a setup from scratch** — done 2026-10-15 (`83479e4`, `d56ee1e`, `289767b`): track profile, generator with confidence, engineer tests low-confidence parameters first. Spec + tickets: `setup-generator/`.
+
+Next: real-game check in practice (engineer corner A/B, live duel), then phase 5.3+ (Energy, Setup/stints, Debrief, Track page, retire Streamlit).
