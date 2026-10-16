@@ -1,6 +1,6 @@
 # 16: Visual polish of the React app (dark only)
 
-**Status:** needs-triage
+**Status:** done
 **Area:** UI · requested by the user 2026-10-16 ("telemetry is fine, but it looks bare")
 
 **Agreed (grilling 2026-10-16):**
@@ -13,3 +13,4 @@
 - implementation per page by Sonnet subagents (medium); screenshots via headless Chrome before / after
 
 ## Comments
+- 2026-10-16: done — foundation 169166b, Live f2f78db (includes ticket 04), Session pages 6ed014a, Setups / Library / Planner (this commit's successor). Checks: tsc, vitest 126, e2e 7/7, screenshots in the session scratchpad. Not seen on screen: a duel result table, expanded evidence rows.
