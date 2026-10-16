@@ -13,7 +13,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.4;
   font-variant-numeric: tabular-nums;
 }
@@ -29,14 +29,18 @@ h4 {
   font-weight: 600;
 }
 h1 {
-  font-size: 18px;
+  font-size: 24px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.01em;
 }
 h2 {
   font-size: 15px;
 }
 h3 {
   font-size: 12px;
-  letter-spacing: 0.05em;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-dim);
 }
@@ -63,18 +67,19 @@ p {
   align-items: center;
   gap: 18px;
   padding: 0 16px;
-  height: 42px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+  height: 46px;
+  background: linear-gradient(90deg, #15171c, #0e1013);
+  box-shadow: 0 1px 0 var(--border), 0 3px 0 -1px var(--accent);
   position: sticky;
   top: 0;
   z-index: 10;
 }
 .brand {
-  font-weight: 800;
-  letter-spacing: 0.12em;
+  font-weight: 900;
+  font-style: italic;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-size: 13px;
+  font-size: 16px;
 }
 .brand b {
   color: var(--accent);
@@ -86,20 +91,20 @@ p {
 .topnav a,
 .tabs a {
   padding: 6px 12px;
-  border-radius: var(--radius);
   color: var(--text-dim);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 .topnav a:hover,
 .tabs a:hover {
   color: var(--text);
-  background: var(--panel-2);
 }
 .topnav a.active,
 .tabs a.active {
-  color: var(--text);
-  background: var(--panel-2);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  color: var(--text-head);
+  box-shadow: inset 0 -3px 0 var(--accent);
 }
 .spacer {
   flex: 1;
@@ -167,9 +172,9 @@ textarea,
 button {
   font: inherit;
   color: var(--text);
-  background: var(--panel-2);
+  background: var(--input);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 3px;
   padding: 5px 8px;
 }
 input[type="number"] {
@@ -194,10 +199,14 @@ button:focus-visible {
 }
 button {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 button:hover:not(:disabled) {
-  background: var(--border);
+  background: var(--panel-2);
+  border-color: #3a404b;
 }
 button:disabled {
   opacity: 0.5;
@@ -207,6 +216,8 @@ button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+  clip-path: polygon(8px 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+  padding: 6px 18px;
 }
 button.primary:hover:not(:disabled) {
   filter: brightness(1.1);

@@ -9,7 +9,6 @@ import "uplot/dist/uPlot.min.css"
 import { selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt } from "../lib/format"
 import type { PaneSpec, SeriesSpec, TraceData } from "../lib/traces"
-import { useTheme } from "../lib/theme"
 import "./TraceChart.css"
 
 interface ChartTheme {
@@ -256,7 +255,6 @@ export function TraceChart({ data, sync, testId, zoom = null }: Props) {
   const zoomFrom = zoom?.[0]
   const zoomTo = zoom?.[1]
   const id = useId()
-  const theme = useTheme()
 
   useEffect(() => {
     const host = hostRef.current
@@ -307,7 +305,7 @@ export function TraceChart({ data, sync, testId, zoom = null }: Props) {
       built.plots = []
       builtRef.current = null
     }
-  }, [data, sync, id, theme])
+  }, [data, sync, id])
 
   useEffect(() => {
     const built = builtRef.current

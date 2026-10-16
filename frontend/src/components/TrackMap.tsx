@@ -9,7 +9,6 @@ import { scaleColor, scaleGradient } from "../lib/colors"
 import { nearestIndex, selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned } from "../lib/format"
 import { nearestOnScreen, projectTrack, zoomMapPayload, type Projection } from "../lib/maplayout"
-import { useTheme } from "../lib/theme"
 import "./TrackMap.css"
 
 interface MapTheme {
@@ -108,7 +107,6 @@ export function TrackMap({ data: full, sync, title, height = 520, zoom = null, m
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const staticRef = useRef<HTMLCanvasElement | null>(null)
   const id = useId()
-  const theme = useTheme()
   const [width, setWidth] = useState(0)
   const [hover, setHover] = useState<number | null>(null)
   const group = useCursorStore(selectGroup(sync))
@@ -151,7 +149,7 @@ export function TrackMap({ data: full, sync, title, height = 520, zoom = null, m
     canvas.style.width = `${width}px`
     canvas.style.height = `${height}px`
     canvas.dataset.ready = String(Date.now())
-  }, [data, proj, width, height, theme, shownMarks])
+  }, [data, proj, width, height, shownMarks])
 
   // Cursor dots on top of the cached static layer.
   useEffect(() => {
@@ -168,7 +166,7 @@ export function TrackMap({ data: full, sync, title, height = 520, zoom = null, m
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     if (pinIdx != null && Number.isFinite(proj.px[pinIdx])) dot(ctx, proj.px[pinIdx], proj.py[pinIdx], 7, t.accent, t.bg, 2)
     if (liveIdx != null && Number.isFinite(proj.px[liveIdx])) dot(ctx, proj.px[liveIdx], proj.py[liveIdx], 6, t.bg, t.text, 2.5)
-  }, [proj, pinIdx, liveIdx, width, height, data, theme])
+  }, [proj, pinIdx, liveIdx, width, height, data])
 
   if (!valid) return <div className="tm-hint" data-testid="track-map">No position channels for this lap.</div>
 

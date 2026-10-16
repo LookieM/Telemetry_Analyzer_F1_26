@@ -1,32 +1,24 @@
+/* Dark only: pit-wall readability with an F1 accent. Colour carries meaning (good / bad / warn / info), the rest is graphite. */
 :root {
-  --bg: #0d1014;
-  --panel: #14181d;
-  --panel-2: #1a2027;
-  --border: #2a313a;
-  --grid: rgba(139, 149, 161, 0.16);
-  --band: rgba(139, 149, 161, 0.1);
-  --text: #d8dde3;
-  --text-dim: #8b95a1;
-  --accent: #e03c31;
-  --good: #2e9e44;
-  --warn: #e8a317;
-  --bad: #d7263d;
-  --info: #3e7cc9;
-  --radius: 6px;
-  --font-ui: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --bg: #0b0c0f;
+  --panel: #121419;
+  --panel-head: #171a21;
+  --panel-2: #1a1d24;
+  --input: #0f1115;
+  --border: #262a33;
+  --grid: rgba(150, 160, 175, 0.12);
+  --band: rgba(150, 160, 175, 0.07);
+  --text: #eceef1;
+  --text-dim: #8a93a0;
+  --text-head: #ffffff;
+  --accent: #e10600;
+  --good: #1ed760;
+  --warn: #ffb800;
+  --bad: #ff2d3f;
+  --info: #3d8bff;
+  --radius: 4px;
+  --panel-grad: linear-gradient(180deg, #151820, var(--panel) 40px);
+  --font-ui: "Titillium Web", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
   color-scheme: dark;
-}
-
-:root[data-theme="light"] {
-  --bg: #f3f4f6;
-  --panel: #ffffff;
-  --panel-2: #eef0f3;
-  --border: #cfd4db;
-  --grid: rgba(70, 80, 95, 0.16);
-  --band: rgba(70, 80, 95, 0.09);
-  --text: #1a1f26;
-  --text-dim: #5d6773;
-  --accent: #d12f25;
-  color-scheme: light;
 }

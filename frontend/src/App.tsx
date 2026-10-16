@@ -1,5 +1,4 @@
 import { NavLink, Route, Routes, useLocation } from "react-router-dom"
-import { setTheme, useTheme } from "./lib/theme"
 import { Library } from "./pages/Library"
 import { LivePage } from "./pages/Live"
 import { Planner } from "./pages/Planner"
@@ -7,7 +6,6 @@ import { SessionPage } from "./pages/Session"
 import { SetupsIndex, SetupsPage } from "./pages/Setups"
 
 export function App() {
-  const theme = useTheme()
   if (useLocation().pathname.startsWith("/live")) return <LivePage />
   return (
     <div className="shell">
@@ -23,10 +21,6 @@ export function App() {
           <NavLink to="/setups">Setups</NavLink>
           <NavLink to="/live">Live</NavLink>
         </nav>
-        <span className="spacer" />
-        <button className="ghost" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} title="Toggle light / dark theme">
-          {theme === "dark" ? "Light" : "Dark"}
-        </button>
       </header>
       <main className="page">
         <Routes>
