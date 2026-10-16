@@ -18,3 +18,4 @@ Downstream: best lap / PB, references, tyre degradation fits, pit-loss windows (
 - [ ] tests: #47 lap 4 and #49 lap 11 become `partial`; Miami race best becomes lap 1 (1:32.516)
 
 ## Comments
+- 2026-10-16 (real game, pad, Miami FP1 #52, 14 laps): every lap with a **garage visit** (laps 4, 8, 11 — garage values change mid-lap, tyre age resets, 7-9 game-minutes in the garage) is one merged lap: the partial lap before the garage + the out-lap from the pit exit, class `push`. `pit_status` stays 0 in the garage and the recorded frames carry no `driverStatus`, so nothing marks them. Lap 11 "1:32.601" — the session best — is such an out-lap timed from the pit exit. Fix scope grows: the recorder must keep `driverStatus` (garage / out-lap / in-lap), and the classifier must mark a lap whose garage values or tyre set change mid-lap as `out` (or split it).

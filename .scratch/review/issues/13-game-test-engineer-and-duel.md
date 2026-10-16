@@ -13,3 +13,4 @@ Neither the engineer test nor the live duel has run against the game yet (only r
 - [ ] leave to the menu so the session is saved; then check the Setups page (baseline offer) and the session's Corners tab
 
 ## Comments
+- 2026-10-16 22:19-22:33 (pad, Miami FP1 #52): a **live duel** ran (setups "4": wings 0/0, "5": wings 25/25; C5). Stored result: A 1 counted lap (lap 10), B 0, stopped by the driver, no winner. Matching the recording: in the duel window A had laps 9 (out-lap, rightly not counted) and 10, B had lap 11 (out-lap) and 12, stopped right around the end of lap 12 — so the counting behaved as designed; too few laps. Setup recognition from the game worked (both fingerprints stored with the right garage values). UX notes: each setup change took 7-9 minutes in the garage; the duel feed is lost when the duel stops (no record of what it said) — keep the feed in the stored result.
