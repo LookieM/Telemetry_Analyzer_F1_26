@@ -1,12 +1,12 @@
 /* Setup duel inside the Engineer card (sizes in em of the page --u). */
 .dl-start { display: flex; flex-direction: column; gap: 0.4em; border-top: 1px solid var(--border); padding-top: 0.5em; }
-.dl-start-title { font-size: 1.25em; font-weight: 700; }
+.dl-start-title { font-size: 1.25em; font-weight: 800; font-style: italic; text-transform: uppercase; }
 .dl-start .dim { margin: 0; color: var(--text-dim); font-size: 0.9em; }
 .dl-n { display: flex; gap: 0.5em; }
 .dl-names { display: flex; flex-direction: column; gap: 0.3em; }
 .dl-go { align-self: flex-start; font-size: 1.15em; border-color: var(--good); }
 .dl-rows { display: flex; flex-direction: column; gap: 0.3em; }
-.dl-row { display: flex; align-items: center; gap: 0.6em; padding: 0.3em 0.6em; border: 2px solid var(--border); border-radius: 0.4em; background: var(--panel-2); min-width: 0; }
+.dl-row { display: flex; align-items: center; gap: 0.6em; padding: 0.3em 0.6em; border: 0 solid var(--border); border-left-width: 0.3em; border-radius: var(--radius); background: var(--panel-2); min-width: 0; }
 .dl-row.now { border-color: var(--good); }
 .dl-row.skipped { opacity: 0.5; }
 .dl-key { font-size: 1.5em; font-weight: 800; font-family: var(--font-mono); }

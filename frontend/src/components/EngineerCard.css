@@ -3,19 +3,20 @@
 .eg-card .dim { color: var(--text-dim); }
 .eg-head { display: flex; align-items: baseline; gap: 0.7em; }
 .eg-head h3 { margin: 0; }
-.eg-phase { font-weight: 700; padding: 0.05em 0.6em; border-radius: 0.3em; background: var(--info); color: #fff; font-size: 0.85em; }
+.eg-head { align-items: center; }
+.eg-phase { font-weight: 700; padding: 0.05em 0.6em; border-radius: var(--radius); background: var(--info); color: #fff; font-size: 0.85em; text-transform: uppercase; letter-spacing: 0.08em; }
 .eg-param { font-size: 1em; font-weight: 600; }
 .eg-budget { font-family: var(--font-mono); font-size: 1.2em; font-weight: 700; }
 
-.eg-instruction { font-size: 1.7em; font-weight: 700; line-height: 1.15; }
+.eg-instruction { font-size: 1.7em; font-weight: 800; font-style: italic; text-transform: uppercase; line-height: 1.15; }
 .eg-progress { font-size: 1.15em; }
 .eg-progress b { font-family: var(--font-mono); }
 .eg-hint { color: var(--text-dim); font-size: 0.9em; }
-.eg-warn { background: rgba(232, 163, 23, 0.16); border: 1px solid var(--warn); color: var(--warn); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
-.eg-error { background: rgba(215, 38, 61, 0.16); border: 1px solid var(--bad); color: var(--bad); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
+.eg-warn { background: rgba(255, 184, 0, 0.16); border: 1px solid var(--warn); color: var(--warn); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
+.eg-error { background: rgba(255, 45, 63, 0.16); border: 1px solid var(--bad); color: var(--bad); border-radius: 0.4em; padding: 0.3em 0.6em; font-weight: 600; }
 
 .eg-variants { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5em; }
-.eg-var { display: flex; align-items: center; gap: 0.5em; padding: 0.35em 0.6em; border: 2px solid var(--border); border-radius: 0.4em; background: var(--panel-2); min-width: 0; }
+.eg-var { display: flex; align-items: center; gap: 0.5em; padding: 0.35em 0.6em; border: 0 solid var(--border); border-left-width: 0.3em; border-radius: var(--radius); background: var(--panel-2); min-width: 0; }
 .eg-var.now { border-color: var(--good); }
 .eg-var-n { font-size: 1.6em; font-weight: 800; font-family: var(--font-mono); }
 .eg-var-t { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -24,27 +25,28 @@
 /* buttons: big touch/click targets */
 .eg-verdict { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5em; }
 .eg-verdict.two { grid-template-columns: 1fr 1fr; }
-.eg-big { font: inherit; font-size: 1.9em; font-weight: 800; padding: 0.35em 0.2em; border-radius: 0.35em; border: 2px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 0.1em; min-width: 0; }
-.eg-big small { font-size: 0.42em; font-weight: 600; color: var(--text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.eg-big.on { border-color: var(--accent); background: rgba(224, 60, 49, 0.2); }
+.eg-big { font: inherit; font-size: 1.9em; font-weight: 900; font-style: italic; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.35em 0.2em; border-radius: var(--radius); border: 0 solid var(--border); border-top-width: 0.12em; background: var(--panel-2); color: var(--text); cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 0.1em; min-width: 0; }
+.eg-big small { font-size: 0.42em; font-weight: 600; font-style: normal; text-transform: none; letter-spacing: 0; color: var(--text-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.eg-big:hover:not(:disabled) { border-top-color: var(--accent); }
+.eg-big.on { border-color: var(--accent); background: linear-gradient(180deg, rgba(225, 6, 0, 0.3), rgba(225, 6, 0, 0.08)); }
 .eg-big:disabled { opacity: 0.5; cursor: default; }
 .eg-strength { display: flex; gap: 0.5em; align-items: center; }
-.eg-seg { font: inherit; font-size: 1.15em; font-weight: 700; padding: 0.3em 1.1em; border-radius: 0.35em; border: 2px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
-.eg-seg.on { border-color: var(--info); background: rgba(62, 124, 201, 0.25); }
+.eg-seg { font: inherit; font-size: 1.15em; font-weight: 700; padding: 0.3em 1.1em; border-radius: var(--radius); border: 2px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em; }
+.eg-seg.on { border-color: var(--info); background: rgba(61, 139, 255, 0.25); }
 .eg-count { margin-left: auto; font-family: var(--font-mono); }
 .eg-tags { display: flex; flex-wrap: wrap; gap: 0.4em; }
 .eg-tag { font: inherit; font-size: 0.95em; padding: 0.3em 0.7em; border-radius: 1.2em; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
-.eg-tag.on { border-color: var(--good); background: rgba(46, 158, 68, 0.22); font-weight: 700; }
+.eg-tag.on { border-color: var(--good); background: rgba(30, 215, 96, 0.2); font-weight: 700; }
 .eg-tag:disabled { opacity: 0.4; cursor: default; }
 .eg-submit { display: flex; gap: 0.5em; }
-.eg-note { flex: 1; min-width: 0; font: inherit; font-size: 1em; padding: 0.4em 0.6em; border-radius: 0.35em; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
-.eg-go { font: inherit; font-size: 1.3em; font-weight: 800; padding: 0.2em 1.3em; border-radius: 0.35em; border: 2px solid var(--good); background: var(--good); color: #fff; cursor: pointer; }
+.eg-note { flex: 1; min-width: 0; font: inherit; font-size: 1em; padding: 0.4em 0.6em; border-radius: var(--radius); border: 1px solid var(--border); background: var(--input); color: var(--text); }
+.eg-go { font: inherit; font-size: 1.3em; font-weight: 800; padding: 0.2em 1.3em; border-radius: var(--radius); border: 2px solid var(--good); background: var(--good); color: #06130b; cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em; }
 .eg-go:disabled { opacity: 0.4; cursor: default; }
 .eg-q-title { font-size: 1.25em; font-weight: 700; }
 .eg-revert p { margin: 0.3em 0 0.5em; }
 
 /* result */
-.eg-result { display: flex; flex-direction: column; gap: 0.3em; padding: 0.4em 0.6em; border-radius: 0.4em; background: var(--panel-2); border-left: 4px solid var(--border); }
+.eg-result { display: flex; flex-direction: column; gap: 0.3em; padding: 0.4em 0.6em; border-radius: var(--radius); background: var(--panel-2); border-left: 0.3em solid var(--accent); }
 .eg-sw { display: flex; flex-direction: column; }
 .eg-sw b { font-size: 1.15em; }
 .eg-sw.v1 { color: var(--text); }
@@ -75,6 +77,6 @@
 .eg-history summary { cursor: pointer; }
 .eg-history ul { margin: 0.3em 0 0; padding-left: 1.2em; }
 .eg-controls { display: flex; gap: 0.5em; align-items: center; }
-.eg-ctl { font: inherit; font-size: 1em; font-weight: 700; padding: 0.35em 1em; border-radius: 0.35em; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
+.eg-ctl { font: inherit; font-size: 1em; font-weight: 700; padding: 0.35em 1em; border-radius: var(--radius); border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; text-transform: uppercase; letter-spacing: 0.06em; }
 .eg-ctl.stop { border-color: var(--bad); color: var(--bad); }
 .eg-ctl:disabled { opacity: 0.5; cursor: default; }

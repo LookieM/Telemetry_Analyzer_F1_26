@@ -7,15 +7,16 @@
   flex-direction: column;
   gap: 0.6em;
   padding: 0.7em 0.9em;
-  background: var(--bg);
+  background: radial-gradient(900px 500px at 50% -10%, #171a21, var(--bg) 70%);
   color: var(--text);
   overflow: hidden;
 }
 .live .dim { color: var(--text-dim); }
 .live .bad { color: var(--bad); }
 .live code { font-family: var(--font-mono); font-size: 0.9em; }
-.lv-card { background: var(--panel); border: 1px solid var(--border); border-radius: 0.5em; padding: 0.6em 0.8em; min-height: 0; }
-.lv-card h3 { font-size: 0.75em; margin-bottom: 0.4em; display: flex; gap: 0.5em; align-items: center; }
+.lv-card { background: var(--panel-grad); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.6em 0.8em; min-height: 0; }
+.lv-card h3 { font-size: 0.75em; margin-bottom: 0.4em; display: flex; gap: 0.5em; align-items: center; color: var(--text-head); letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700; }
+.lv-card h3::before { content: ""; display: inline-block; width: 1em; height: 0.7em; background: var(--accent); transform: skewX(-20deg); flex: none; }
 .k { display: block; font-size: 0.7em; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
 .tag { display: inline-block; margin-left: 0.4em; padding: 0 0.4em; border-radius: 0.3em; font-size: 0.7em; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
 .tag.bad { border-color: var(--bad); color: var(--bad); }
@@ -24,9 +25,9 @@
 .chip.big { width: 1.4em; height: 1.4em; }
 
 /* session bar */
-.lv-bar-top { display: flex; align-items: center; gap: 0.9em; font-size: 1.1em; white-space: nowrap; }
+.lv-bar-top { font-weight: 700; display: flex; align-items: center; gap: 0.9em; font-size: 1.1em; white-space: nowrap; }
 .lv-back { color: var(--text-dim); font-size: 1.3em; }
-.lv-track { font-size: 1.4em; }
+.lv-track { font-size: 1.6em; font-weight: 900; font-style: italic; text-transform: uppercase; }
 .lv-lap b, .lv-pos b { font-size: 1.3em; }
 .lv-spacer { flex: 1; }
 .lv-flag { padding: 0.05em 0.6em; border-radius: 0.3em; font-weight: 700; background: var(--panel-2); border: 1px solid var(--border); }
@@ -43,10 +44,10 @@
 
 /* timing */
 .lv-timing { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0.8em; align-items: stretch; }
-.lv-delta { display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: 0.6em; border: 2px solid var(--border); background: var(--panel); padding: 0.3em 0; }
+.lv-delta { display: flex; flex-direction: column; justify-content: center; align-items: center; border-radius: var(--radius); border: 0 solid var(--border); border-left-width: 0.35em; background: var(--panel-grad); padding: 0.3em 0; }
 .lv-delta.fast { border-color: var(--good); }
 .lv-delta.slow { border-color: var(--bad); }
-.lv-delta-val { font-size: 6.2em; line-height: 1; font-weight: 700; font-family: var(--font-mono); }
+.lv-delta-val { font-size: 6.2em; line-height: 1; font-weight: 800; letter-spacing: -0.04em; font-family: var(--font-mono); }
 .lv-delta.fast .lv-delta-val { color: var(--good); }
 .lv-delta.slow .lv-delta-val { color: var(--bad); }
 .lv-delta-ref { color: var(--text-dim); font-size: 0.95em; }
@@ -63,8 +64,8 @@
 .lv-tracecard { padding: 0.3em; flex: 0 0 12em; }
 .lv-trace { width: 100%; height: 100%; display: block; }
 .lv-trace.lv-empty { display: flex; align-items: center; justify-content: center; color: var(--text-dim); }
-.lv-trace-slow { fill: rgba(215, 38, 61, 0.08); }
-.lv-trace-fast { fill: rgba(46, 158, 68, 0.08); }
+.lv-trace-slow { fill: rgba(255, 45, 63, 0.08); }
+.lv-trace-fast { fill: rgba(30, 215, 96, 0.08); }
 .lv-trace-zero { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 6 6; }
 .lv-trace-line { fill: none; stroke: var(--warn); stroke-width: 3; }
 .lv-trace-dot { fill: var(--warn); }
@@ -76,10 +77,10 @@
 /* tyres */
 .lv-tyre-head { display: flex; align-items: center; gap: 0.6em; font-size: 1.2em; margin-bottom: 0.4em; }
 .lv-wheels { display: grid; grid-template-columns: 1fr 1fr; gap: 0.7em; }
-.lv-wheel { background: var(--panel); border: 2px solid var(--border); border-radius: 0.5em; padding: 0.8em 0.9em; }
-.lv-wheel.st-cold { border-color: var(--info); }
-.lv-wheel.st-hot { border-color: var(--bad); }
-.lv-wheel.st-ok { border-color: var(--good); }
+.lv-wheel { background: var(--panel-grad); border: 0 solid var(--border); border-top-width: 0.3em; border-radius: var(--radius); padding: 0.8em 0.9em; }
+.lv-wheel.st-cold { border-top-color: var(--info); }
+.lv-wheel.st-hot { border-top-color: var(--bad); }
+.lv-wheel.st-ok { border-top-color: var(--good); }
 .lv-wheel-head { display: flex; justify-content: space-between; font-size: 1em; }
 .lv-wheel-temps { display: flex; align-items: baseline; gap: 0.8em; margin: 0.15em 0 0.35em; }
 .lv-wheel-temps .t { font-size: 3em; font-weight: 700; font-family: var(--font-mono); line-height: 1.1; }
@@ -99,12 +100,12 @@
 .lv-kv b { color: var(--text); font-family: var(--font-mono); }
 
 /* strategy */
-.lv-strategy { display: grid; grid-template-columns: auto 1fr; gap: 1em; align-items: center; border-width: 2px; }
+.lv-strategy { display: grid; grid-template-columns: auto 1fr; gap: 1em; align-items: center; border-width: 0 0 0 0.45em; }
 .lv-strategy.lv-muted { display: block; color: var(--text-dim); }
-.lv-strategy.call-box { border-color: var(--bad); background: rgba(215, 38, 61, 0.14); }
+.lv-strategy.call-box { border-color: var(--bad); background: rgba(255, 45, 63, 0.14); }
 .lv-strategy.call-stay { border-color: var(--good); }
 .lv-call { display: flex; flex-direction: column; align-items: center; min-width: 5.5em; }
-.lv-call-word { font-size: 3.4em; font-weight: 800; line-height: 1; letter-spacing: 0.04em; }
+.lv-call-word { font-size: 3.4em; font-weight: 900; font-style: italic; line-height: 1; letter-spacing: 0.04em; }
 .call-box .lv-call-word { color: var(--bad); }
 .call-stay .lv-call-word { color: var(--good); }
 .lv-call-sub { font-size: 0.8em; color: var(--text-dim); }
@@ -115,8 +116,10 @@
 .lv-rivalcard { flex: 1 1 6em; overflow: hidden; padding: 0.3em 0.5em; }
 .lv-rivals { width: 100%; border-collapse: collapse; font-size: 1.2em; }
 .lv-rivals th { text-align: left; color: var(--text-dim); font-size: 0.7em; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.2em 0.4em; }
-.lv-rivals td { padding: 0.45em 0.4em; border-top: 1px solid var(--border); white-space: nowrap; }
-.lv-rivals tr.you td { background: rgba(224, 60, 49, 0.18); font-weight: 700; }
+.lv-rivals td { padding: 0.45em 0.4em; border-top: 1px solid var(--border); white-space: nowrap; font-family: var(--font-mono); }
+.lv-rivals td:nth-child(2) { font-family: var(--font-ui); font-weight: 700; }
+.lv-rivals tr.you { background: linear-gradient(90deg, rgba(225, 6, 0, 0.35), rgba(225, 6, 0, 0.08)); }
+.lv-rivals tr.you td { font-weight: 700; }
 .lv-rivals tr.threat td { box-shadow: inset 3px 0 0 var(--bad); }
 
 .lv-events { display: flex; gap: 0.8em; flex-wrap: nowrap; overflow: hidden; font-size: 0.85em; white-space: nowrap; }
@@ -130,7 +133,7 @@
 .lv-strategy { flex-shrink: 0; }  /* a tall engineer / duel card scrolls inside instead of squashing these */
 .lv-damage.ok { flex-direction: row; align-items: baseline; gap: 1em; }
 .lv-damage.ok h3 { margin: 0; }
-.lv-damage.box { border-color: var(--bad); background: rgba(215, 38, 61, 0.14); }
+.lv-damage.box { border-color: var(--bad); background: rgba(255, 45, 63, 0.14); }
 .lv-wear { margin-left: auto; color: var(--text-dim); font-size: 0.8em; }
 .lv-damage-parts { display: flex; flex-wrap: wrap; gap: 0.4em; }
 .dmg { padding: 0.1em 0.55em; border-radius: 0.3em; border: 1px solid var(--border); background: var(--panel-2); font-size: 0.95em; }

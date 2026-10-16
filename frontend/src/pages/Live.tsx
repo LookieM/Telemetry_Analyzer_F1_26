@@ -2,7 +2,8 @@ import { useEffect, useMemo } from "react"
 import { Link } from "react-router-dom"
 import { EngineerCard } from "../components/EngineerCard"
 import { formatLapTime, fmt, fmtSigned } from "../lib/format"
-import { ERS_MODES, compoundColor, gapLabel, useLive } from "../lib/live"
+import { duelShown } from "../lib/duelLive"
+import { ERS_MODES, compoundColor, gapLabel, liveSections, useLive } from "../lib/live"
 import type { LiveDamage, LiveRival, LiveSnapshot, LiveStrategy, LiveWheel } from "../lib/live"
 import "./Live.css"
 
@@ -143,7 +144,7 @@ function StrategyCard({ s, session, damage }: { s: LiveStrategy | null; session:
       </div>
     )
   }
-  if (!s) return <div className="lv-card lv-strategy lv-muted">{session.type === "Race" ? "Strategy call starts after the first lap." : "Strategy runs in races only."}</div>
+  if (!s) return <div className="lv-card lv-strategy lv-muted">Strategy call starts after the first lap.</div>
   if (!s.available) return <div className="lv-card lv-strategy lv-muted">{s.reason ?? "No strategy model available."}</div>
   const under = session.sc > 0
   const call = s.call ?? s.call_green
@@ -230,6 +231,8 @@ export function LivePage() {
           ? "Waiting for the game (UDP)…"
           : null
 
+  const show = liveSections(s?.session.type ?? "", s?.engineer != null && s.engineer.phase !== "idle", duelShown(s?.duel))
+
   return (
     <div className="live" data-testid="live-page">
       <header className="lv-bar-top">
@@ -269,7 +272,7 @@ export function LivePage() {
       {!s ? (
         <div className="lv-wait" data-testid="live-wait">
           <h1>{conn ?? "Waiting for telemetry…"}</h1>
-          <p className="dim">Game: Settings → Telemetry → UDP On, IP 127.0.0.1, port 20777. Or run <code>python -m telemetria_server.replay data/udp_captures/&lt;file&gt;.f1cap</code>.</p>
+          <p className="dim">Game: Settings → Telemetry → UDP On, IP 127.0.0.1, port {live.status?.udp_port ?? 20777}. Or run <code>python -m telemetria_server.replay data/udp_captures/&lt;file&gt;.f1cap</code>.</p>
         </div>
       ) : (
         <>
@@ -367,9 +370,9 @@ export function LivePage() {
 
           <DamageCard d={s.damage} />
 
-          <StrategyCard s={s.strategy} session={s.session} damage={s.damage} />
+          {show.strategy && <StrategyCard s={s.strategy} session={s.session} damage={s.damage} />}
 
-          <EngineerCard view={s.engineer} duel={s.duel} />
+          {show.engineer && <EngineerCard view={s.engineer} duel={s.duel} />}
 
           <section className="lv-card lv-rivalcard">
             <Rivals rows={s.rivals} />

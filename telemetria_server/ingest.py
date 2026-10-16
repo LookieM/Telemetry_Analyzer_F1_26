@@ -274,6 +274,7 @@ class UdpIngest:
             "type": "status", "connected": bool(s.packets) and time.time() - s.last_t < 3.0,
             "packets_per_s": round(s.rate, 1), "frame_gap_pct": round(s.gap_pct, 3),
             "packets": s.packets, "recording": self.mgr.rec.has_data, "udp_error": self.udp_error,
+            "udp_port": self.cfg.udp_port,
         }
 
     def _queue_ingest(self, rec: SessionRecorder) -> None:

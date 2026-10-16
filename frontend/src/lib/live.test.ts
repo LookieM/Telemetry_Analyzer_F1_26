@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { gapLabel, pushDelta } from "./live"
+import { gapLabel, liveSections, pushDelta } from "./live"
 
 describe("pushDelta", () => {
   it("appends increasing distances and ignores null deltas", () => {
@@ -34,5 +34,22 @@ describe("gapLabel", () => {
     expect(gapLabel(0.18)).toBe("+0.2")
     expect(gapLabel(0)).toBe("0.0")
     expect(gapLabel(null)).toBe("—")
+  })
+})
+
+describe("liveSections", () => {
+  it("race: strategy, no engineer", () => {
+    expect(liveSections("Race", false, false)).toEqual({ strategy: true, engineer: false })
+  })
+  it("practice: engineer, no strategy", () => {
+    for (const t of ["FP1", "FP2", "FP3", "Test", "Practice", "Short Practice"]) expect(liveSections(t, false, false)).toEqual({ strategy: false, engineer: true })
+  })
+  it("quali: neither", () => {
+    for (const t of ["Quali", "Qualifying", "Short Quali"]) expect(liveSections(t, false, false)).toEqual({ strategy: false, engineer: false })
+  })
+  it("a running program or duel stays visible in any session", () => {
+    expect(liveSections("Race", true, false).engineer).toBe(true)
+    expect(liveSections("Quali", false, true).engineer).toBe(true)
+    expect(liveSections("Race", true, false).strategy).toBe(true)
   })
 })

@@ -12,3 +12,4 @@
 - [ ] Live: SC lap that is only partly behind the SC is classed `slow` (see 03) — check the class shown in lap pickers ("Lap 5 — 2:53.912 (slow)").
 
 ## Comments
+- 2026-10-16: Engineer card repeats the tyre hint ("No spare fresh sets: continue on the current set…") twice — once as `tyre_hint` and once as the latest feed line.

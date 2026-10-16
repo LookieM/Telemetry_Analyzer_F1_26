@@ -117,6 +117,7 @@ export interface LiveStatus {
   frame_gap_pct?: number
   recording?: boolean
   udp_error?: string | null
+  udp_port?: number
 }
 export interface LiveEvent {
   type: "event"
@@ -144,6 +145,20 @@ export function gapLabel(gap: number | null): string {
   if (gap == null || !Number.isFinite(gap)) return "—"
   if (Math.abs(gap) < 0.05) return "0.0"
   return `${gap > 0 ? "+" : "−"}${Math.abs(gap).toFixed(1)}`
+}
+
+export interface LiveSections {
+  strategy: boolean
+  engineer: boolean
+}
+
+/** Which optional cards the Live page shows. A running engineer program or duel is never hidden, whatever the session. */
+export function liveSections(sessionType: string, engineerActive: boolean, duelActive: boolean): LiveSections {
+  const t = sessionType.toLowerCase()
+  const race = t === "race"
+  const quali = t.includes("quali")
+  const running = engineerActive || duelActive
+  return { strategy: race, engineer: running || (!race && !quali) }
 }
 
 export interface LiveData {
