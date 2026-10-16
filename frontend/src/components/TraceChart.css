@@ -40,3 +40,27 @@
 .tc-root .u-cursor-y {
   border-color: var(--text-dim) !important;
 }
+
+/* pane titles and legend: dim UI font, values in mono */
+.tc-head {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-size: 10.5px;
+  margin-top: 8px;
+}
+.tc-root .u-legend {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.tc-root .u-legend .u-label {
+  font-weight: 600;
+}
+.tc-root .u-legend .u-value {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+}
+.tc-root .u-legend .u-marker {
+  border-radius: 1px;
+}

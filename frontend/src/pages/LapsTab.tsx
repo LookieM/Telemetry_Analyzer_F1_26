@@ -98,7 +98,7 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
 
   return (
     <div className="stack" data-testid="laps-tab">
-      <Panel>
+      <Panel className="toolbar">
         <div className="row">
           <LapSelect laps={laps} value={focusLap} onChange={setFocusLap} label="Focus lap" />
           <ReferenceFields choice={choice} modes={["none", "lap", "session"]} />
@@ -114,10 +114,10 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
           </label>
         </div>
         {extrasInfo.data && (
-          <div className="row" role="group" aria-label="Extra channels" data-testid="extras-picker">
-            <span className="note">Extra panes</span>
+          <div className="row extras" role="group" aria-label="Extra channels" data-testid="extras-picker">
+            <span className="toolbar-label">Extra panes</span>
             {extrasInfo.data.map((e) => (
-              <label key={e.key} className="field" title={e.available ? undefined : (e.reason ?? "Not available")} style={{ flexDirection: "row", gap: 4, alignItems: "center", opacity: e.available ? 1 : 0.5 }}>
+              <label key={e.key} className={`field extra${e.available && picked.includes(e.key) ? " on" : ""}${e.available ? "" : " off"}`} title={e.available ? undefined : (e.reason ?? "Not available")}>
                 <input type="checkbox" checked={e.available && picked.includes(e.key)} disabled={!e.available} onChange={() => togglePicked(e.key)} />
                 {e.label}
                 {!e.available && <span className="note"> ({e.reason})</span>}
@@ -137,7 +137,7 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
         {ref && cmp.data && (
           <Metric
             label="Lap Δ vs reference"
-            value={`${fmtSigned(cmp.data.final_delta, 3)} s`}
+            value={<span className={cmp.data.final_delta != null && cmp.data.final_delta > 0 ? "bad" : "good"}>{fmtSigned(cmp.data.final_delta, 3)} s</span>}
             sub={cmp.data.final_delta != null && cmp.data.final_delta > 0 ? "slower" : "faster"}
             testId="metric-delta"
           />

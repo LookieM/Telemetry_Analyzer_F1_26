@@ -230,7 +230,7 @@ function Body({ detail, tyres, focusLap, setFocusLap, limitInput, setLimitInput 
 
       <Panel title="Stints">
         <StintTimeline rows={[{ label: "This session", stints: stintSegments(summaries) }]} lapsTotal={lapsTotal} />
-        <label className="field" style={{ marginTop: 8, maxWidth: 260 }}>
+        <label className="field toolbar-row" style={{ marginTop: 10, maxWidth: 260 }}>
           Focus lap
           <select value={focusLap ?? ""} onChange={(e) => setFocusLap(Number(e.target.value))} aria-label="Focus lap">
             {detail.laps.map((l) => (

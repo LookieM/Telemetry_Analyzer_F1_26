@@ -13,6 +13,7 @@ import "./TraceChart.css"
 
 interface ChartTheme {
   text: string
+  dim: string
   grid: string
   border: string
   band: string
@@ -25,6 +26,7 @@ function readTheme(el: HTMLElement): ChartTheme {
   const v = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback
   return {
     text: v("--text", "#d8dde3"),
+    dim: v("--text-dim", "#8a93a0"),
     grid: v("--grid", "rgba(128,128,128,0.18)"),
     border: v("--border", "rgba(128,128,128,0.45)"),
     band: v("--band", "rgba(128,128,128,0.10)"),
@@ -56,9 +58,9 @@ function drawBands(u: uPlot, data: TraceData, theme: ChartTheme, labels: boolean
     ctx.fillStyle = b.color || theme.band
     ctx.fillRect(x0, top, x1 - x0, height)
     if (labels && b.label && x1 - x0 > 18 * dpr) {
-      ctx.globalAlpha = 0.75
-      ctx.fillStyle = theme.text
-      ctx.font = `${10 * dpr}px ${theme.font}`
+      ctx.globalAlpha = 0.9
+      ctx.fillStyle = theme.dim
+      ctx.font = `600 ${10 * dpr}px ${theme.font}`
       ctx.fillText(b.label, x0 + 3 * dpr, top + 11 * dpr)
     }
   })
@@ -151,7 +153,7 @@ function buildPane(
     ],
     axes: [
       {
-        stroke: theme.text,
+        stroke: theme.dim,
         font: axisFont,
         grid: { stroke: theme.grid, width: 1 },
         ticks: { stroke: theme.grid, width: 1, size: 4 },
@@ -159,7 +161,7 @@ function buildPane(
         values: isLast ? undefined : (_u, vals) => vals.map(() => ""),
       },
       {
-        stroke: theme.text,
+        stroke: theme.dim,
         font: axisFont,
         grid: { stroke: theme.grid, width: 1 },
         ticks: { stroke: theme.grid, width: 1, size: 4 },

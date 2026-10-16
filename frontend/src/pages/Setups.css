@@ -55,16 +55,20 @@ tr.leader-row td {
   background: var(--band);
 }
 a.button {
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--text);
-  background: var(--panel-2);
+  background: var(--input);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 3px;
   padding: 5px 8px;
   text-decoration: none;
 }
 a.button:hover {
-  background: var(--border);
+  background: var(--panel-2);
+  border-color: #3a404b;
 }
 .not-comparable { margin-top: 8px; }
 

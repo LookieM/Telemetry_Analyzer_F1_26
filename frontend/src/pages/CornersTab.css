@@ -67,3 +67,39 @@
 tr.ct-selected td {
   background: var(--panel-2);
 }
+
+.ct-name .ct-class {
+  color: var(--text-dim);
+  padding: 1px 6px;
+}
+.ct-callouts li {
+  padding: 7px 12px;
+  background: var(--panel-2);
+  border-left-width: 4px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.ct-callouts {
+  gap: 5px;
+}
+.ct-callouts li:hover {
+  background: #20242d;
+}
+.ct-callouts li.loss {
+  background: color-mix(in srgb, var(--bad) 7%, var(--panel-2));
+}
+.ct-callouts li.gain {
+  background: color-mix(in srgb, var(--good) 6%, var(--panel-2));
+}
+.ct-loss,
+.ct-gain,
+.ct-flat {
+  font-family: var(--font-mono);
+}
+.ct-delta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  opacity: 0.9;
+}

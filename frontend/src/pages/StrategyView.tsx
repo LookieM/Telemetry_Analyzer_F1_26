@@ -136,9 +136,9 @@ export function StrategyView({ track, state, onStateChange, review, testId }: Pr
 
   return (
     <div className="stack" data-testid={testId ?? "strategy-view"}>
-      <Panel>
+      <Panel className="toolbar">
         <div className="row">
-          <strong>{data?.track ?? track}</strong>
+          <strong className="sv-track">{data?.track ?? track}</strong>
           {onStateChange ? (
             <label className="field">
               Track state
@@ -278,7 +278,7 @@ export function StrategyView({ track, state, onStateChange, review, testId }: Pr
                         <MetricRow>
                           <Metric label="Actual race" value={reviewObj.actual_time != null ? formatRaceTime(reviewObj.actual_time) : "incomplete"} sub={reviewObj.actual.label} testId="review-actual" />
                           <Metric label="Model of that plan" value={formatRaceTime(reviewObj.model_actual_time)} />
-                          <Metric label="Strategy cost" value={`${fmtSigned(reviewObj.strategy_cost_s, 1)} s`} title="Model time of the plan you ran minus the model optimum." />
+                          <Metric label="Strategy cost" value={<span className={reviewObj.strategy_cost_s > 0.05 ? "bad" : undefined}>{fmtSigned(reviewObj.strategy_cost_s, 1)} s</span>} title="Model time of the plan you ran minus the model optimum." />
                           <Metric
                             label="Execution vs model"
                             value={reviewObj.execution_s != null ? `${fmtSigned(reviewObj.execution_s, 1)} s` : "—"}

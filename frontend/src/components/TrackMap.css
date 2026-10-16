@@ -77,3 +77,28 @@
   color: var(--text-dim);
   margin-top: 1px;
 }
+
+.tm-panel {
+  font-family: var(--font-ui);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+.tm-head {
+  color: var(--text-head);
+  font-size: 12px;
+}
+.tm-num {
+  font-family: var(--font-mono);
+}
+.tm-legend {
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.tm-bar-labels {
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.tm-title {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}

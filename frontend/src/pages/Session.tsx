@@ -96,12 +96,17 @@ export function SessionPage() {
     <div className="stack">
       <div className="page-head">
         <h1 data-testid="session-title">
-          #{session.id} · {session.track ?? "?"}
+          <span className="session-id">#{session.id} ·</span> {session.track ?? "?"}
         </h1>
         {session.session_type && <span className="tag">{session.session_type}</span>}
-        <span className="dim">
-          {session.car ?? "?"} · {session.lap_count} laps · best {formatLapTime(session.best_lap_time)}
-          {session.conditions ? ` · ${session.conditions}` : ""}
+        <span className="session-meta">
+          <span>{session.car ?? "?"}</span>
+          <span>{session.lap_count} laps</span>
+          <span>
+            best{" "}
+            <b className="session-best">{formatLapTime(session.best_lap_time)}</b>
+          </span>
+          {session.conditions && <span>{session.conditions}</span>}
         </span>
         <span className="spacer" />
         {session.track && (

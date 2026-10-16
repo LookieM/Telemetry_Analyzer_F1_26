@@ -179,3 +179,101 @@ table.data tr.selected td {
 .bad {
   color: var(--bad);
 }
+
+/* ---------- selector toolbar (focus lap / reference / map colour / extra panes) ---------- */
+.panel.toolbar {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  border-left: 3px solid var(--accent);
+}
+.toolbar .row {
+  gap: 10px 14px;
+}
+.toolbar label.field,
+.toolbar-row label.field,
+label.field.toolbar-row {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.toolbar select,
+.toolbar-row select {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.toolbar .extras {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+  align-items: center;
+  gap: 6px;
+}
+.toolbar-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+/* extra panes as toggle chips */
+.toolbar label.field.extra {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--input);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.toolbar label.field.extra:hover:not(.off) {
+  border-color: #3a404b;
+  color: var(--text);
+}
+.toolbar label.field.extra.on {
+  border-color: var(--accent);
+  color: var(--text-head);
+  background: color-mix(in srgb, var(--accent) 14%, var(--input));
+}
+.toolbar label.field.extra.off {
+  opacity: 0.45;
+  cursor: default;
+}
+.toolbar label.field.extra input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+/* metric value that already carries good/bad: the class colours the text */
+.metric-value .good {
+  color: var(--good);
+}
+.metric-value .bad {
+  color: var(--bad);
+}
+.panel > .note:last-child {
+  margin-top: 8px;
+}
+table.data th .ct-sort {
+  color: inherit;
+}
+.sv-track {
+  align-self: center;
+  font-size: 16px;
+  font-weight: 700;
+  font-style: italic;
+  color: var(--text-head);
+  margin-right: 6px;
+}
+.toolbar-row select,
+select.toolbar-row {
+  font-weight: 600;
+}

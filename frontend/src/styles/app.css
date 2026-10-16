@@ -229,3 +229,35 @@ button.danger {
 button.ghost {
   background: transparent;
 }
+
+/* session header: track is the title, the rest is compact secondary info */
+.page-head h1 .session-id {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.session-meta {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px 0;
+  align-items: baseline;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.session-meta > span + span::before {
+  content: "";
+  display: inline-block;
+  width: 1px;
+  height: 11px;
+  margin: 0 10px;
+  background: var(--border);
+  vertical-align: -1px;
+}
+.session-best {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-head);
+  font-size: 14px;
+}
+.page-head {
+  align-items: center;
+}

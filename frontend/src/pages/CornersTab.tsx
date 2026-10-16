@@ -162,7 +162,7 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
           ) : undefined
         }
       >
-        <div className="row">
+        <div className="row toolbar-row">
           <LapSelect laps={laps} value={focusLap} onChange={setFocusLap} label="Focus lap" />
           <ReferenceFields choice={choice} modes={["lap", "session"]} />
         </div>
@@ -184,9 +184,9 @@ export function CornersTab({ detail, focusLap, setFocusLap }: Props) {
       {data && (
         <>
           <MetricRow>
-            <Metric label="Lap Δ vs reference" value={`${fmtSigned(data.lap_delta, 3)} s`} sub={data.lap_delta > 0 ? "slower" : "faster"} testId="metric-lap-delta" />
-            <Metric label="In corners" value={`${fmtSigned(data.sum_corner_delta, 3)} s`} sub={`${rows.length} corners`} testId="metric-corner-sum" />
-            <Metric label="On straights" value={`${fmtSigned(data.straights_delta, 3)} s`} sub="between the corners" testId="metric-straights" />
+            <Metric label="Lap Δ vs reference" value={<span className={data.lap_delta > 0 ? "bad" : "good"}>{fmtSigned(data.lap_delta, 3)} s</span>} sub={data.lap_delta > 0 ? "slower" : "faster"} testId="metric-lap-delta" />
+            <Metric label="In corners" value={<span className={data.sum_corner_delta > 0 ? "bad" : "good"}>{fmtSigned(data.sum_corner_delta, 3)} s</span>} sub={`${rows.length} corners`} testId="metric-corner-sum" />
+            <Metric label="On straights" value={<span className={data.straights_delta > 0 ? "bad" : "good"}>{fmtSigned(data.straights_delta, 3)} s</span>} sub="between the corners" testId="metric-straights" />
             <Metric label="Biggest loss" value={worst ? worst.name : "—"} sub={worst ? `${fmtSigned(worst.timeDelta, 3)} s` : "nothing above the noise"} testId="metric-worst" />
             <Metric label="At cursor" value={cursorX != null ? `${cursorX.toFixed(0)} m` : "—"} sub={cornerHere ?? ""} />
           </MetricRow>

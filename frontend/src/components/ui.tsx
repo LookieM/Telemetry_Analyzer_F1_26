@@ -17,9 +17,9 @@ export function MetricRow({ children }: { children: ReactNode }) {
   return <div className="metric-row">{children}</div>
 }
 
-export function Panel({ title, children, actions, testId }: { title?: ReactNode; children: ReactNode; actions?: ReactNode; testId?: string }) {
+export function Panel({ title, children, actions, testId, className }: { title?: ReactNode; children: ReactNode; actions?: ReactNode; testId?: string; className?: string }) {
   return (
-    <section className="panel" data-testid={testId}>
+    <section className={className ? `panel ${className}` : "panel"} data-testid={testId}>
       {(title || actions) && (
         <header className="panel-head">
           <h3>{title}</h3>
