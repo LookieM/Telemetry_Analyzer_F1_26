@@ -1,0 +1,6 @@
+/* Library: filter toolbar + a sessions table that fits 1600 px */
+.lib-search { flex: 0 1 280px; }
+.lib-search input { width: 100%; }
+.cell-clip { display: block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td:has(> .cell-clip.notes), td .cell-clip { min-width: 0; }
+button.lib-del { padding: 2px 8px; font-size: 11px; }

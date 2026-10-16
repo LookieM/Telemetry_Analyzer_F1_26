@@ -182,8 +182,8 @@ function GeneratedRow({ item, entry }: { item: GeneratedSetup["display"][number]
       <button className="gen-row" aria-expanded={open} onClick={() => setOpen((v) => !v)} data-testid={`gen-row-${item.key}`}>
         <span className="gen-label">{item.label}</span>
         <span className="mono">{valueText(item)}</span>
-        <span className={`badge ${confidenceClass(entry.confidence)}`} data-testid={`gen-badge-${item.key}`}>
-          {confidenceText(entry)}
+        <span className={`badge dot ${confidenceClass(entry.confidence)}`} title={confidenceText(entry)} aria-label={confidenceText(entry)} data-testid={`gen-badge-${item.key}`}>
+          <span className="sr-only">{confidenceText(entry)}</span>
         </span>
       </button>
       {open && (
@@ -258,6 +258,9 @@ function GeneratedCard({ track, hasBaseline, onClose, onBaseline, saveError }: {
               </div>
             ))}
           </div>
+          <p className="gen-legend" data-testid="gen-legend">
+            <span className="badge dot good" /> measured / meta / high <span className="badge dot warn" /> medium <span className="badge dot bad" /> low, prior only
+          </p>
           <p className="note">Click a value to see where it came from. Camber stays at the meta; values are snapped to the garage steps and the suspension is kept coherent.</p>
         </>
       )}

@@ -35,7 +35,7 @@ export function Planner() {
         <h1>Strategy planner</h1>
         <span className="dim">Every F1 26 circuit · {share}% race distance</span>
       </div>
-      <Panel>
+      <Panel className="toolbar">
         <div className="row">
           <label className="field">
             Track

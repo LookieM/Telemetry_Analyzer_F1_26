@@ -7,6 +7,7 @@ import { SESSION_TYPES } from "../lib/constants"
 import { formatBytes, formatDate, formatLapTime } from "../lib/format"
 import { filterSessions } from "../lib/sessions"
 import "./Setups.css"
+import "./Library.css"
 
 function ImportPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
@@ -88,14 +89,18 @@ export function Library() {
     { key: "laps", header: "Laps", align: "right", render: (s) => s.lap_count },
     { key: "best", header: "Best lap", align: "right", render: (s) => formatLapTime(s.best_lap_time) },
     { key: "size", header: "Stored", align: "right", render: (s) => formatBytes(s.stored_size_bytes) },
-    { key: "source", header: "Source file", render: (s) => <span className="dim">{s.source_name}</span> },
-    { key: "notes", header: "Notes", render: (s) => <span className="dim">{[s.conditions, s.notes].filter(Boolean).join(" · ")}</span> },
+    { key: "source", header: "Source file", render: (s) => <span className="dim cell-clip" title={s.source_name}>{s.source_name}</span> },
+    { key: "notes", header: "Notes", render: (s) => {
+        const text = [s.conditions, s.notes].filter(Boolean).join(" · ")
+        return <span className="dim cell-clip" title={text}>{text}</span>
+      },
+    },
     {
       key: "del",
       header: "",
       render: (s) => (
         <button
-          className="ghost danger"
+          className="ghost danger lib-del"
           title="Delete this session from the library"
           onClick={(e) => {
             e.stopPropagation()
@@ -124,21 +129,19 @@ export function Library() {
         </MetricRow>
       )}
       {showImport && <ImportPanel />}
-      <Panel
-        title="Sessions"
-        actions={
-          <>
-            {track && (
-              <Link className="button" to={`/track/${encodeURIComponent(track)}/setups`} title="Compare the setups you have driven here">
-                Setups for {track}
-              </Link>
-            )}
+      <Panel className="toolbar">
+        <div className="row">
+          <label className="field">
+            Track
             <select value={track} onChange={(e) => setTrack(e.target.value)} aria-label="Filter track">
               <option value="">All tracks</option>
               {tracks.map((t) => (
                 <option key={t}>{t}</option>
               ))}
             </select>
+          </label>
+          <label className="field">
+            Type
             <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Filter session type">
               <option value="">All types</option>
               {SESSION_TYPES.map((t) => (
@@ -146,10 +149,20 @@ export function Library() {
               ))}
               <option value="(untagged)">(untagged)</option>
             </select>
-            <input placeholder="Search file, car, notes…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search sessions" />
-          </>
-        }
-      >
+          </label>
+          <label className="field lib-search">
+            Search
+            <input placeholder="File, car, notes…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search sessions" />
+          </label>
+          <span className="spacer" />
+          {track && (
+            <Link className="button" to={`/track/${encodeURIComponent(track)}/setups`} title="Compare the setups you have driven here">
+              Setups for {track}
+            </Link>
+          )}
+        </div>
+      </Panel>
+      <Panel title="Sessions" actions={<span className="dim mono">{rows.length === all.length ? rows.length : `${rows.length} / ${all.length}`}</span>}>
         {sessions.isLoading && <Loading />}
         {sessions.isError && <ErrorBox error={sessions.error} />}
         {del.isError && <ErrorBox error={del.error} />}

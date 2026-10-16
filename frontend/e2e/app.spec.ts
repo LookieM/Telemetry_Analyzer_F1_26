@@ -173,7 +173,7 @@ test("planner works for any track and deep links survive a reload", async ({ pag
   const errors = await withErrorWatch(page, async () => {
     await page.goto("/planner")
     await expect(page.getByTestId("best-plan")).toContainText("-stop")
-    await page.getByLabel("Track", { exact: true }).fill("Bahrain")
+    await page.getByLabel("Track", { exact: true }).selectOption("Bahrain")
     await expect(page.getByTestId("model-sources")).toContainText("#2", { timeout: 20_000 }) // the Bahrain race
     await page.reload()
     await expect(page.getByTestId("planner")).toBeVisible()
