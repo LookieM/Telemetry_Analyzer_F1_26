@@ -84,6 +84,20 @@ def test_fuel_and_compound_do_not_make_a_new_setup():
     assert by_key(d, "A")["counted"] == 2 and not by_key(d, "B")["assigned"]
 
 
+def test_mfd_brake_bias_and_diff_on_track_are_the_same_setup():
+    d = make()
+    d.on_garage(True, 1001.0)
+    d.on_garage(False, 1002.0, SA)
+    car = Car(d)
+    car.laps(SA, [90.0])
+    car.laps(setup(brake_bias_setup=0.58, diff_onThrottle_setup=0.8), [90.0, 90.1])
+    v = d.view()
+    assert by_key(d, "A")["counted"] == 3 and not by_key(d, "B")["assigned"]
+    assert sum("on the MFD" in x["text"] for x in v["feed"]) == 1
+    row = next(c for c in d.result()["contestants"] if c["key"] == "A")
+    assert row["setup"]["brake_bias_setup"] == 0.56 and row["setup"]["diff_onThrottle_setup"] == 1.0
+
+
 def test_pressure_only_difference_warns_and_counts_as_same():
     d = make()
     car = Car(d)

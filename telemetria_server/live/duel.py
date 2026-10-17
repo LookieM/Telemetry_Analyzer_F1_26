@@ -8,6 +8,8 @@ commands return ``view()``; invalid ones raise ``EngineerError(reason)`` (the sa
 Contestants are "A", "B", "C" in the order their setups are first seen (leaving the garage or finishing a lap).
 A setup is recognised by the mechanical fingerprint (``setup_history.mech_fingerprint``: fuel, brake-bias mirror and
 compound are ignored) computed WITHOUT the tyre pressures, so a pressure-only change is the same setup (and warns).
+Brake bias and on-throttle diff are left out too: the driver moves them on the MFD while driving, so a change there
+is still the same setup (said once in the feed); the contestant keeps the garage values seen when leaving the garage.
 Laps count when valid, not in/out/pit, on the duel's compound (the first counted lap's) and not a mistake (> 2 s
 slower than the contestant's median); target 4 per contestant, 3 needed, at most 5. Lap times are corrected for
 fuel and tyre age (``lap_correction``). With every contestant at >= 3 counted laps and the car in the garage the
@@ -69,15 +71,17 @@ KEYS = ("A", "B", "C")
 MAX_NAME = 40
 WEAR_MIN_POINTS = 3
 PRESSURE_KEYS = ("tyre_press_setup_0", "tyre_press_setup_1", "tyre_press_setup_2", "tyre_press_setup_3")
+MFD_KEYS = ("brake_bias_setup", "diff_onThrottle_setup")   # adjustable on track, so not part of the setup's identity
 
 PlanTime = Callable[[float], "float | None"]
 
 
 def setup_fingerprints(setup: dict[str, float] | None) -> tuple[str | None, str | None]:
-    """(fingerprint without tyre pressures, full mechanical fingerprint) of a garage setup dict."""
+    """(fingerprint without tyre pressures, mechanical fingerprint with them) of a garage setup dict; MFD keys out."""
     if not setup:
         return None, None
-    return (mech_fingerprint({k: v for k, v in setup.items() if k not in PRESSURE_KEYS}), mech_fingerprint(setup))
+    car = {k: v for k, v in setup.items() if k not in MFD_KEYS}
+    return mech_fingerprint({k: v for k, v in car.items() if k not in PRESSURE_KEYS}), mech_fingerprint(car)
 
 
 @dataclass
@@ -86,7 +90,8 @@ class _Contestant:
     name: str | None
     fp: str | None = None                      # fingerprint without pressures
     full_fps: set[str] = field(default_factory=set)
-    setup: dict[str, float] = field(default_factory=dict)   # last full setup seen with it
+    setup: dict[str, float] = field(default_factory=dict)   # last full setup seen with it (MFD keys: garage values)
+    mfd_said: set[tuple] = field(default_factory=set)      # MFD values already reported in the feed
     laps: list[Lap] = field(default_factory=list)
     skipped: bool = False
 
@@ -255,7 +260,7 @@ class Duel:
             if c.full_fps and full not in c.full_fps:
                 self.warning = f"Same setup as {c.label}, only the tyre pressures differ: counted as {c.label}"
         c.full_fps.add(full)
-        c.setup = dict(setup or {})
+        self._take_setup(c, dict(setup or {}), garage=where == "leaving the garage")
         self.on_car = c.key
         if where == "leaving the garage" and len(self._counted(c)) >= TARGET_LAPS and self._next() not in (None, c):
             nxt = self._next()
@@ -263,6 +268,16 @@ class Duel:
         if self.warning:
             self._say(self.warning)
         return c
+
+    def _take_setup(self, c: _Contestant, setup: dict[str, float], garage: bool) -> None:
+        """Store the setup on the car; on track the MFD keys keep their garage values (a change is said once)."""
+        if not garage and c.setup:
+            moved = tuple((k, setup[k]) for k in MFD_KEYS if k in setup and k in c.setup and setup[k] != c.setup[k])
+            if moved and moved not in c.mfd_said:
+                c.mfd_said.add(moved)
+                self._say(f"Brake bias / differential changed on the MFD: still {c.label}")
+            setup.update({k: c.setup[k] for k in MFD_KEYS if k in c.setup})
+        c.setup = setup
 
     # -- progress -----------------------------------------------------------------------------
     def _next(self) -> _Contestant | None:
