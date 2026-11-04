@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import socket
 import sys
 import threading
 import webbrowser
@@ -13,18 +12,7 @@ from pathlib import Path
 import uvicorn
 
 from .app import create_app
-from .config import load_config
-
-
-def _http_port_taken(host: str, port: int) -> bool:
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        probe.bind((host, port))
-    except OSError:
-        return True
-    finally:
-        probe.close()
-    return False
+from .config import http_port_taken, load_config
 
 
 def main() -> None:
@@ -65,7 +53,7 @@ def main() -> None:
     if cfg.access_token:
         url += f"?token={cfg.access_token}"
 
-    if _http_port_taken(cfg.host, cfg.port):
+    if http_port_taken(cfg.host, cfg.port):
         print(f"\nThe server already seems to be running at {url} (port {cfg.port} is taken).")
         print("Close the other server window first, or start this one with --port <another port>.\n")
         if not args.no_browser:

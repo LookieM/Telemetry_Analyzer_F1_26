@@ -1,3 +1,6 @@
 fastapi==0.143.0
 pydantic==2.14.0
 httpx==0.28.1
+uvicorn==0.52.3
+websockets==16.1.1
+pywebview==6.2.1   # desktop window (telemetria_server/desktop.py)

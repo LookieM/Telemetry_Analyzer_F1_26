@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .app_paths import app_dir
 from .db import (
     compact_dataframe,
     default_data_dir,
@@ -53,7 +54,7 @@ def import_csv(
     A blank session type / track state is inferred from the file name and the telemetry.
     `source_name` overrides the stored file name (uploads land in a temp file).
     """
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     path = Path(csv_path)
     if not path.exists():
         raise FileNotFoundError(path)
@@ -96,7 +97,7 @@ def ingest_dataframe(
     DB rows, track outline, progress and the setup journal. Shared by CSV import and live recording.
     An existing `source_hash` is not stored twice; the existing session is returned.
     """
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     digest = source_hash
     existing = find_by_hash(digest, root)
     if existing:

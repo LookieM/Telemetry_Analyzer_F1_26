@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from .channels import WHEELS
+from .map_data import map_axes as _map_xy  # moved: the server needs it without Plotly
 
 
 DARK_LAYOUT = dict(
@@ -62,16 +63,6 @@ def pace_chart(summary: pd.DataFrame) -> go.Figure:
     fig.add_hline(y=best, line_dash="dot", line_color=BEST, annotation_text="Best")
     fig.update_layout(**DARK_LAYOUT, title="Lap times", height=360, yaxis_title="Lap time (s)")
     return fig
-
-
-def _map_xy(df: pd.DataFrame) -> tuple[str, str] | None:
-    """Return horizontal map axes. F1/SRT world frame uses X/Y on the ground plane."""
-    if "pos_x" in df.columns and "pos_y" in df.columns:
-        return "pos_x", "pos_y"
-    if "pos_x" in df.columns and "pos_z" in df.columns:
-        # Legacy fallback if only X/Z were stored
-        return "pos_x", "pos_z"
-    return None
 
 
 def track_outline_trace(outline: dict | None) -> go.Scatter | None:

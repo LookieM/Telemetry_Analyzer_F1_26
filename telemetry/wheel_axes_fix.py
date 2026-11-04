@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .app_paths import app_dir
 from .db import connect, db_path, default_data_dir, ensure_session_meta_schema
 
 FLAG = "wheel_axes_fix_v1"
@@ -90,7 +91,7 @@ def repair_library_wheel_axes(app_root: Path | None = None) -> dict[str, Any]:
             return {"done": False, "repaired": 0, "skipped": 0, "backup": None}
         rows = conn.execute("SELECT id, telemetry_path FROM sessions").fetchall()
         finished = {r[0] for r in conn.execute("SELECT key FROM library_meta WHERE key LIKE ?", (f"{FLAG}:%",))}
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     todo = [(int(r["id"]), root / r["telemetry_path"], r["telemetry_path"]) for r in rows if f"{FLAG}:{int(r['id'])}" not in finished]
     todo = [t for t in todo if t[1].exists()]
     skipped = len(rows) - len(todo)

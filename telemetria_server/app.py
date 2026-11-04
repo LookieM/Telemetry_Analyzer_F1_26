@@ -17,7 +17,9 @@ from telemetry.setup_reread import reread_library_setups
 from telemetry.wheel_axes_fix import repair_library_wheel_axes
 
 from .api import corners, imports, laps, library, live, settings, setups, strategy, tracks, tyres
-from .config import REPO_ROOT, Config
+from telemetry.app_paths import bundle_dir
+
+from .config import Config
 from .ingest import UdpIngest
 
 COOKIE = "telemetria_token"
@@ -42,7 +44,7 @@ class SPAStaticFiles(StaticFiles):
 
 def create_app(config: Config | None = None, *, frontend_dist: Path | None = None) -> FastAPI:
     cfg = config or Config()
-    dist = frontend_dist if frontend_dist is not None else REPO_ROOT / "frontend" / "dist"
+    dist = frontend_dist if frontend_dist is not None else bundle_dir() / "frontend" / "dist"
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

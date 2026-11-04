@@ -40,9 +40,11 @@ def _values(arr: Any, decimals: int = 4) -> list[float | None]:
 
 def map_axes(df: pd.DataFrame) -> tuple[str, str] | None:
     """Horizontal map axes (X/Y on the ground plane, legacy X/Z fallback)."""
-    from .plots import _map_xy
-
-    return _map_xy(df)
+    if "pos_x" in df.columns and "pos_y" in df.columns:
+        return "pos_x", "pos_y"
+    if "pos_x" in df.columns and "pos_z" in df.columns:
+        return "pos_x", "pos_z"  # legacy: only X/Z were stored
+    return None
 
 
 def lap_map_payload(

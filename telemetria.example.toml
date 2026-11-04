@@ -1,4 +1,4 @@
-# Copy to telemetria.toml (repo root) to override the defaults. Every key is optional.
+# Copy to telemetria.toml (repo root, or next to Telemetria.exe) to override the defaults. Every key is optional.
 
 host = "127.0.0.1"      # "0.0.0.0" exposes the server to the home network (set access_token then)
 port = 8765             # HTTP / WebSocket port
@@ -9,4 +9,6 @@ forward_to = ""         # relay raw UDP packets to other apps; empty = off
 access_token = ""       # empty = open; otherwise pass ?token=... once (it is kept in a cookie)
 live_rate_hz = 10       # live snapshot rate
 wing_change_s = 5.0     # extra stop time for a new front wing (assumption used by the live damage call)
-# app_root = "C:/path/to/library"   # folder holding data/telemetry.db; default = repo root
+live_window = true      # desktop app: open the Live view in its own window (on the portrait screen if there is one)
+# app_root = "C:/path/to/library"   # folder holding data/telemetry.db; default = repo root / folder of Telemetria.exe;
+#                                    # a relative path is relative to this file

@@ -12,3 +12,6 @@ frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
 frontend/tsconfig.tsbuildinfo
+
+# Desktop build (build_exe.bat)
+desktop_build/

@@ -12,6 +12,7 @@ from typing import Any, Iterable, Iterator
 
 import pandas as pd
 
+from .app_paths import app_dir
 from .loader import SETUP_CHANNEL_KEYS
 
 # Core channels every analysis relies on (always kept, fixed dtypes). Any other numeric export
@@ -149,7 +150,7 @@ _SESSION_META_COLUMNS: dict[str, str] = {
 
 
 def default_data_dir(app_root: Path | None = None) -> Path:
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     data = root / "data"
     data.mkdir(parents=True, exist_ok=True)
     (data / "sessions").mkdir(parents=True, exist_ok=True)
@@ -348,7 +349,7 @@ def load_session_telemetry(
     session = get_session(session_id, app_root)
     if not session:
         raise FileNotFoundError(f"Session {session_id} not found")
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     path = root / session["telemetry_path"]
     if not path.exists():
         raise FileNotFoundError(f"Telemetry file missing: {path}")
@@ -426,7 +427,7 @@ def update_session_setup_fingerprint(
 
 
 def delete_session(session_id: int, app_root: Path | None = None) -> None:
-    root = app_root or Path(__file__).resolve().parent.parent
+    root = app_root or app_dir()
     session = get_session(session_id, app_root)
     if not session:
         return
