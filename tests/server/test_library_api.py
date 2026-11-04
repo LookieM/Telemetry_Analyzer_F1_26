@@ -70,6 +70,16 @@ def test_patch_session(client, race_id):
     assert row["notes"] == "hello"
 
 
+def test_patch_track_state_composes_conditions(client, race_id):
+    r = client.patch(f"/api/sessions/{race_id}", json={"track_state": "inter", "condition_notes": "drying line"})
+    assert r.json()["conditions"] == "Intermediate — drying line"
+    ts = client.get(f"/api/sessions/{race_id}").json()["track_state"]
+    assert ts["state"] == "inter" and ts["notes"] == "drying line" and "Intermediate" in ts["banner"]
+    r = client.patch(f"/api/sessions/{race_id}", json={"track_state": "dry", "condition_notes": ""})
+    assert r.json()["conditions"] == ""
+    assert client.get(f"/api/sessions/{race_id}").json()["track_state"] == {"state": "dry", "notes": "", "banner": None}
+
+
 def test_delete_session(client, race_id, lib_root: Path):
     tel = next((lib_root / "data" / "sessions").glob("*.parquet"))
     assert client.delete(f"/api/sessions/{race_id}").json() == {"deleted": race_id}

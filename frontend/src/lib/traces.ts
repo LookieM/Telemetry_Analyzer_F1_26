@@ -3,6 +3,7 @@ import type {
   ChannelsPayload,
   ComparePayload,
   InventoryRow,
+  LapSummary,
   OptimisePayload,
   ReviewJson,
   Series,
@@ -403,4 +404,41 @@ export function raceTrace(opt: OptimisePayload, review: ReviewJson | null): Trac
       { title: "Lap time (pit loss on the in-lap)", unit: "s", height: 170, decimals: 3, axisDecimals: 1, range, series: times },
     ],
   }
+}
+
+const finiteOrNull = (v: number | null | undefined): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+
+/** Whole session lap by lap: lap times (best / push / other), fuel used and average tyre wear; pit laps marked. */
+export function sessionPaceTrace(laps: LapSummary[]): TraceData {
+  if (!laps.length) return { x: [], panes: [] }
+  const x = laps.map((l) => l.lap)
+  const time = laps.map((l) => finiteOrNull(l.lap_time))
+  const isBest = laps.map((l) => l.is_best)
+  const isPush = laps.map((l) => l.lap_class === "push" && !l.is_best)
+  const other = laps.map((_, i) => !isBest[i] && !isPush[i])
+  const pushTimes = time.filter((t, i) => t != null && (isPush[i] || isBest[i])) as number[]
+  const sorted = [...pushTimes].sort((a, b) => a - b)
+  // Zoom on the push laps: out / in / SC laps would squash them into a flat line.
+  const range: [number, number] | undefined = sorted.length >= 2 ? [sorted[0] - 0.5, sorted[sorted.length - 1] + Math.max(1, 0.25 * (sorted[sorted.length - 1] - sorted[0]))] : undefined
+  const wear = laps.map((l) => finiteOrNull(l.tyre_wear_avg))
+  const fuel = laps.map((l) => finiteOrNull(l.fuel_used))
+  const panes: PaneSpec[] = [
+    {
+      title: "Lap time",
+      unit: "s",
+      height: 190,
+      decimals: 3,
+      axisDecimals: 1,
+      range,
+      series: [
+        { label: "best", values: masked(time, isBest), color: DELTA, mode: "points", size: 9 },
+        { label: "push", values: masked(time, isPush), color: FOCUS, mode: "points", size: 6 },
+        { label: "other", values: masked(time, other), color: NEUTRAL, mode: "points", size: 6, hollow: true },
+      ],
+    },
+  ]
+  if (fuel.some((v) => v != null)) panes.push({ title: "Fuel used", unit: "kg/lap", height: 90, decimals: 2, series: [{ label: "fuel", values: fuel, color: REF, mode: "points", size: 5 }] })
+  if (wear.some((v) => v != null)) panes.push({ title: "Tyre wear (avg)", unit: "%", height: 90, decimals: 1, series: [{ label: "wear", values: wear, color: THROTTLE, mode: "step" }] })
+  const markers = laps.filter((l) => l.pit_stop).map((l) => ({ x: l.lap, label: "pit", color: NEUTRAL }))
+  return { x, panes, xLabel: "Lap", xDecimals: 0, markers }
 }

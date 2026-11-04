@@ -55,6 +55,13 @@ p {
   font-size: 12px;
   margin: 6px 0 0;
 }
+.weather-banner {
+  margin: 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--warn);
+  background: var(--panel);
+  color: var(--text);
+}
 
 /* ---------- shell ---------- */
 .shell {

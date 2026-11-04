@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState } from "react"
 import { useCompare, useLapChannels, useLapExtras, useMap } from "../api/hooks"
 import type { LapSummary, SectorDelta, SessionDetail } from "../api/types"
 import { LapSelect, ReferenceFields, useReference } from "../components/ReferencePicker"
+import { GGDiagram } from "../components/GGDiagram"
 import { TraceChart } from "../components/TraceChart"
 import { TrackMap } from "../components/TrackMap"
 import { DataTable, ErrorBox, Loading, Metric, MetricRow, Panel, type Column } from "../components/ui"
 import { selectGroup, useCursorStore } from "../lib/cursor"
 import { fmt, fmtSigned, formatLapTime } from "../lib/format"
 import { bestLapNumber } from "../lib/sessions"
-import { compareTrace, cornerBands, driverTrace, TRACE_CHANNELS } from "../lib/traces"
+import { compareTrace, cornerBands, driverTrace, sessionPaceTrace, TRACE_CHANNELS } from "../lib/traces"
+import { buildGG, GG_CHANNELS, GG_EXTRAS } from "../lib/gg"
 import { loadExtras, saveExtras, usableExtras } from "../lib/extras"
 
 const COLORS = ["speed", "throttle", "brake", "gear", "delta"] as const
@@ -63,6 +65,11 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
   }
   const cmp = useCompare(session.id, focusLap, ref?.lap ?? null, ref?.session ?? null, !!ref, extras)
   const single = useLapChannels(session.id, focusLap, TRACE_CHANNELS, !ref, extras)
+
+  const ggAvailable = !!extrasInfo.data && GG_EXTRAS.every((k) => extrasInfo.data!.find((e) => e.key === k)?.available)
+  const ggChannels = useLapChannels(session.id, focusLap, GG_CHANNELS, ggAvailable, GG_EXTRAS)
+  const gg = useMemo(() => buildGG(ggChannels.data), [ggChannels.data])
+  const paceData = useMemo(() => sessionPaceTrace(laps), [laps])
 
   const labels = useMemo(() => ({ cmp: `L${focusLap}`, ref: ref ? (ref.session ? `S${ref.session} L${ref.lap}` : `L${ref.lap}`) : "Ref" }), [focusLap, ref])
   // Keyed by content so a map refetch (e.g. new colour) does not rebuild the traces and lose the zoom.
@@ -168,6 +175,26 @@ export function LapsTab({ detail, focusLap, setFocusLap }: Props) {
           </Panel>
         </div>
       )}
+
+      <div className="grid-2">
+        <Panel title="Session pace" testId="session-pace">
+          <TraceChart data={paceData} sync="pace" testId="session-pace-chart" />
+          <p className="note">Every lap of the session: best, push and other laps (out / in / SC / slow); fuel used and average tyre wear per lap.</p>
+        </Panel>
+        <Panel title={`G-G · lap ${focusLap ?? "?"}`} testId="gg-panel">
+          {!extrasInfo.data || (ggAvailable && ggChannels.isLoading) ? (
+            <Loading what="Loading g-forces…" />
+          ) : !ggAvailable ? (
+            <p className="note">No g-force channels in this export.</p>
+          ) : ggChannels.isError ? (
+            <ErrorBox error={ggChannels.error} />
+          ) : gg ? (
+            <GGDiagram data={gg} />
+          ) : (
+            <p className="note">No g-force samples on this lap.</p>
+          )}
+        </Panel>
+      </div>
 
       <Panel title="Laps">
         <DataTable

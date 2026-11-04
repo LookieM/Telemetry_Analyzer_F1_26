@@ -1,0 +1,49 @@
+.coach-headline {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-head);
+}
+.callouts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.callout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-left: 3px solid var(--info);
+  border-radius: var(--radius);
+}
+.callout.drive {
+  border-left-color: var(--good);
+}
+.callout.setup {
+  border-left-color: var(--warn);
+}
+.callout.warning {
+  border-left-color: var(--bad);
+}
+.callout strong {
+  color: var(--text-head);
+}
+.callout-meta {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.callout-group + .callout-group {
+  margin-top: 12px;
+}
+.callout-group h4 {
+  margin: 0 0 6px;
+  color: var(--text-dim);
+}

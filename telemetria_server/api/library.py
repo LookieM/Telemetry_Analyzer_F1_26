@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from telemetry import db
 from telemetry.compounds import get_allocation
+from telemetry.conditions import compose_conditions, split_conditions, weather_banner
 from telemetry.corners import normalize_track_name
 
 from ..serialization import to_jsonable
@@ -20,8 +21,15 @@ router = APIRouter()
 
 class SessionPatch(BaseModel):
     session_type: str | None = None
-    conditions: str | None = None
+    conditions: str | None = None  # raw text; or the structured pair below (wins when track_state is set)
+    track_state: str | None = None  # dry / damp / inter / wet
+    condition_notes: str | None = None
     notes: str | None = None
+
+
+def _track_state(session: dict[str, Any]) -> dict[str, Any]:
+    state, notes = split_conditions(session.get("conditions") or "")
+    return {"state": state, "notes": notes, "banner": weather_banner(state)}
 
 
 def _root(request: Request) -> Path:
@@ -61,11 +69,12 @@ def get_session(session_id: int, request: Request) -> Any:
     session, summary = tyres.session_summary(session_id, root)
     if not session:
         raise HTTPException(404, f"Session {session_id} not found")
+    session = db.get_session(session_id, root) or session  # tags / notes fresh (the summary cache keeps the old row)
     alloc = get_allocation(session.get("track"), root)
     laps = summary.copy()
     if "compound" in laps.columns:
         laps["compound_label"] = [alloc.label(None if pd.isna(c) else int(c)) for c in laps["compound"]]
-    return to_jsonable({"session": _meta(session), "laps": laps})
+    return to_jsonable({"session": _meta(session), "laps": laps, "track_state": _track_state(session)})
 
 
 @router.patch("/sessions/{session_id}")
@@ -73,10 +82,13 @@ def patch_session(session_id: int, body: SessionPatch, request: Request) -> Any:
     root = _root(request)
     if not db.get_session(session_id, root):
         raise HTTPException(404, f"Session {session_id} not found")
+    conditions = body.conditions
+    if body.track_state is not None:
+        conditions = compose_conditions(body.track_state, body.condition_notes or "")
     db.update_session_tags(
         session_id,
         session_type=body.session_type,
-        conditions=body.conditions,
+        conditions=conditions,
         notes=body.notes,
         app_root=root,
     )

@@ -22,8 +22,8 @@ def session_or_404(session_id: int, root: Path) -> dict[str, Any]:
     return session
 
 
-def load_columns(session_id: int, root: Path, columns: list[str]) -> pd.DataFrame:
-    """Selected parquet columns of a stored session (404 when the file is gone)."""
+def load_columns(session_id: int, root: Path, columns: list[str] | None) -> pd.DataFrame:
+    """Selected parquet columns of a stored session, None = all (404 when the file is gone)."""
     try:
         return db.load_session_telemetry(session_id, root, columns=columns)
     except FileNotFoundError as exc:

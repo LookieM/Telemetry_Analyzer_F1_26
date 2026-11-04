@@ -5,6 +5,7 @@ import type {
   BaselinePayload,
   BaselineRequest,
   ChannelsPayload,
+  CoachPayload,
   ComparePayload,
   DuelResult,
   BalancePayload,
@@ -79,6 +80,15 @@ export const useBalance = (id: number, enabled = true) =>
     retry: false,
   })
 
+/** Session read + ranked engineer callouts over the whole session (all probable laps, PB as reference). */
+export const useCoach = (id: number) =>
+  useQuery({
+    queryKey: ["coach", id],
+    queryFn: () => api.get<CoachPayload>(`/sessions/${id}/coach`),
+    enabled: Number.isFinite(id) && id > 0,
+    staleTime: 5 * 60_000,
+  })
+
 export const useLapExtras = (id: number) =>
   useQuery({
     queryKey: ["lap-extras", id],
@@ -145,7 +155,7 @@ function useInvalidating<TVars, TData>(fn: (v: TVars) => Promise<TData>) {
 }
 
 export const usePatchSession = () =>
-  useInvalidating((v: { id: number; session_type?: string; conditions?: string; notes?: string }) => {
+  useInvalidating((v: { id: number; session_type?: string; conditions?: string; track_state?: string; condition_notes?: string; notes?: string }) => {
     const { id, ...body } = v
     return api.send<SessionMeta>("PATCH", `/sessions/${id}`, body)
   })

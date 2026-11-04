@@ -132,6 +132,51 @@ test("laps: compare against another session", async ({ page }) => {
   expect(errors).toEqual([])
 })
 
+test("laps: session pace chart and the G-G diagram follow the lap cursor", async ({ page }) => {
+  const errors = await withErrorWatch(page, async () => {
+    await page.goto(`/session/${austriaId}/laps`)
+    await expect(page.getByTestId("session-pace-chart").locator("canvas").first()).toBeVisible()
+    const gg = page.getByTestId("gg-diagram")
+    await expect(gg.locator("circle").nth(50)).toBeAttached()
+    await expect(gg.locator(".gg-cursor")).toHaveCount(0)
+    const over = page.getByTestId("driver-trace").locator(".u-over").first()
+    const ob = (await over.boundingBox())!
+    await page.mouse.move(ob.x + ob.width * 0.4, ob.y + ob.height / 2)
+    await expect(gg.locator(".gg-cursor")).toHaveCount(1)
+    await expect(gg).toContainText(" g")
+  })
+  expect(errors).toEqual([])
+})
+
+test("session details: track state select shows the weather banner", async ({ page }) => {
+  const errors = await withErrorWatch(page, async () => {
+    await page.goto(`/session/${austriaId}/laps`)
+    await page.getByRole("button", { name: "Details" }).click()
+    await page.getByLabel("Track state").selectOption("inter")
+    await page.getByRole("button", { name: /Save tags/ }).click()
+    await expect(page.getByTestId("weather-banner")).toContainText("Intermediate")
+    await page.getByLabel("Track state").selectOption("dry")
+    await page.getByRole("button", { name: /Save tags/ }).click()
+    await expect(page.getByTestId("weather-banner")).toHaveCount(0)
+  })
+  expect(errors).toEqual([])
+})
+
+test("coach: session read and ranked callouts", async ({ page }) => {
+  const errors = await withErrorWatch(page, async () => {
+    await page.goto(`/session/${austriaId}/coach`)
+    await expect(page.getByTestId("coach-headline")).not.toBeEmpty({ timeout: 45_000 })
+    await expect(page.getByTestId("coach-top")).toBeVisible()
+    const more = page.getByTestId("coach-more")
+    if (await more.count()) {
+      const before = await page.getByTestId("coach-callout").count()
+      await more.click()
+      expect(await page.getByTestId("coach-callout").count()).toBeGreaterThan(before)
+    }
+  })
+  expect(errors).toEqual([])
+})
+
 test("tyres: four stints, car grid and model", async ({ page }) => {
   const errors = await withErrorWatch(page, async () => {
     await page.goto(`/session/${austriaId}/tyres`)

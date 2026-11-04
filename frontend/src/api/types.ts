@@ -57,9 +57,48 @@ export interface LapSummary {
   is_best: boolean
 }
 
+export interface TrackStateInfo {
+  state: "dry" | "damp" | "inter" | "wet"
+  notes: string
+  banner: string | null
+}
+
+export interface CoachItem {
+  id: string
+  source: string // corner | insights | ers | stint | setup | windows | diagnosis
+  domain: string // technique | energy | tyres | fuel | setup | weather
+  action_kind: "drive" | "setup" | "manage" | "observe"
+  severity: "info" | "tip" | "warning"
+  priority: number
+  confidence: number
+  score: number
+  title: string
+  detail: string
+  related_keys: string[]
+}
+
+export interface CoachPayload {
+  session_id: number
+  headline: string
+  diagnosis: {
+    focus_lap: number
+    ref_lap: number | null
+    primary_issue: string
+    phase: string
+    strength: string
+    worst_corner: string | null
+    worst_corner_loss_s: number
+    confidence: number
+    track_state: string
+  }
+  top: CoachItem[]
+  rest: CoachItem[]
+}
+
 export interface SessionDetail {
   session: SessionMeta
   laps: LapSummary[]
+  track_state: TrackStateInfo
 }
 
 export interface ChannelsPayload {

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, NavLink, useNavigate, useParams } from "react-router-dom"
 import { useDeleteSession, usePatchSession, useSession } from "../api/hooks"
-import type { SessionMeta } from "../api/types"
+import type { SessionMeta, TrackStateInfo } from "../api/types"
 import { ErrorBox, Loading, Panel } from "../components/ui"
-import { SESSION_TYPES } from "../lib/constants"
+import { SESSION_TYPES, TRACK_STATES, TYRE_STATE_LABEL } from "../lib/constants"
 import { formatBytes, formatLapTime } from "../lib/format"
 import { bestLapNumber } from "../lib/sessions"
 import "./Setups.css"
+import { CoachTab } from "./CoachTab"
 import { CornersTab } from "./CornersTab"
 import { LapsTab } from "./LapsTab"
 import { StrategyTab } from "./StrategyTab"
@@ -17,20 +18,23 @@ const TABS = [
   { key: "corners", label: "Corners" },
   { key: "tyres", label: "Tyres" },
   { key: "strategy", label: "Strategy" },
+  { key: "coach", label: "Coach" },
 ] as const
 
-function TagsEditor({ session }: { session: SessionMeta }) {
+function TagsEditor({ session, trackState }: { session: SessionMeta; trackState: TrackStateInfo }) {
   const patch = usePatchSession()
   const del = useDeleteSession()
   const navigate = useNavigate()
   const [type, setType] = useState(session.session_type)
-  const [conditions, setConditions] = useState(session.conditions)
+  const [state, setState] = useState<string>(trackState.state)
+  const [conditionNotes, setConditionNotes] = useState(trackState.notes)
   const [notes, setNotes] = useState(session.notes)
   useEffect(() => {
     setType(session.session_type)
-    setConditions(session.conditions)
+    setState(trackState.state)
+    setConditionNotes(trackState.notes)
     setNotes(session.notes)
-  }, [session.id, session.session_type, session.conditions, session.notes])
+  }, [session.id, session.session_type, trackState.state, trackState.notes, session.notes])
 
   return (
     <Panel title="Session details" testId="session-details">
@@ -45,14 +49,24 @@ function TagsEditor({ session }: { session: SessionMeta }) {
           </select>
         </label>
         <label className="field">
-          Conditions
-          <input value={conditions} onChange={(e) => setConditions(e.target.value)} placeholder="Dry (blank) / Damp - drizzle …" />
+          Track state
+          <select value={state} onChange={(e) => setState(e.target.value)} aria-label="Track state">
+            {TRACK_STATES.map((s) => (
+              <option key={s} value={s}>
+                {TYRE_STATE_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          Conditions notes
+          <input value={conditionNotes} onChange={(e) => setConditionNotes(e.target.value)} placeholder="drizzle, drying line …" />
         </label>
         <label className="field" style={{ flex: 1, minWidth: 220 }}>
           Notes
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
-        <button className="primary" disabled={patch.isPending} onClick={() => patch.mutate({ id: session.id, session_type: type, conditions, notes })}>
+        <button className="primary" disabled={patch.isPending} onClick={() => patch.mutate({ id: session.id, session_type: type, track_state: state, condition_notes: conditionNotes, notes })}>
           Save tags &amp; notes
         </button>
         <button
@@ -90,7 +104,7 @@ export function SessionPage() {
   if (!Number.isFinite(id)) return <p>Invalid session id.</p>
   if (detail.isLoading) return <Loading what="Loading session…" />
   if (detail.isError || !detail.data) return <ErrorBox error={detail.error ?? "Session not found"} />
-  const { session } = detail.data
+  const { session, track_state: trackState } = detail.data
 
   return (
     <div className="stack">
@@ -116,7 +130,12 @@ export function SessionPage() {
         )}
         <button onClick={() => setShowDetails((v) => !v)}>{showDetails ? "Hide details" : "Details"}</button>
       </div>
-      {showDetails && <TagsEditor session={session} />}
+      {trackState?.banner && (
+        <p className="note weather-banner" data-testid="weather-banner">
+          {trackState.banner}
+        </p>
+      )}
+      {showDetails && <TagsEditor session={session} trackState={trackState} />}
       <nav className="tabs">
         {TABS.map((t) => (
           <NavLink key={t.key} to={`/session/${id}/${t.key}`} className={({ isActive }) => (isActive || (t.key === tab && !params.tab) ? "active" : undefined)}>
@@ -128,6 +147,7 @@ export function SessionPage() {
       {tab === "corners" && <CornersTab detail={detail.data} focusLap={focusLap} setFocusLap={setFocusLap} />}
       {tab === "tyres" && <TyresTab detail={detail.data} focusLap={focusLap} setFocusLap={setFocusLap} />}
       {tab === "strategy" && <StrategyTab detail={detail.data} />}
+      {tab === "coach" && <CoachTab detail={detail.data} />}
     </div>
   )
 }

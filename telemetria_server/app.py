@@ -11,14 +11,13 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from telemetry.app_paths import bundle_dir
 from telemetry.db import ensure_session_meta_schema, init_db
 from telemetry.progress import ensure_progress_schema
 from telemetry.setup_reread import reread_library_setups
 from telemetry.wheel_axes_fix import repair_library_wheel_axes
 
-from .api import corners, imports, laps, library, live, settings, setups, strategy, tracks, tyres
-from telemetry.app_paths import bundle_dir
-
+from .api import coach, corners, imports, laps, library, live, settings, setups, strategy, tracks, tyres
 from .config import Config
 from .ingest import UdpIngest
 
@@ -82,7 +81,7 @@ def create_app(config: Config | None = None, *, frontend_dist: Path | None = Non
                 response.set_cookie(COOKIE, cfg.access_token, httponly=True, samesite="lax")
             return response
 
-    for module in (library, laps, corners, tyres, strategy, settings, imports, tracks, setups):
+    for module in (library, laps, corners, tyres, strategy, settings, imports, tracks, setups, coach):
         app.include_router(module.router, prefix="/api")
     app.include_router(live.router)
 
