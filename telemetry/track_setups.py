@@ -1,5 +1,5 @@
 """
-Typical F1 26 garage baselines by circuit.
+Baseline F1 26 garage setups by circuit (imported presets, see tools/import_setup_presets.py).
 
 Ranges match the in-game garage UI:
 - Fuel 5–110 kg
@@ -21,6 +21,7 @@ from copy import deepcopy
 from typing import Any
 
 from .corners import normalize_track_name
+from .setup_presets_data import PRESETS, SOURCE
 from .setup_tweaker import psi_to_pa
 
 _BASE: dict[str, float] = {
@@ -61,279 +62,88 @@ def coherent_suspension(
     arb_f: float,
     arb_r: float,
 ) -> tuple[float, float, float, float]:
+    """Keep springs and anti-roll bars inside the garage ranges (springs 1-41, ARB 1-21).
+
+    No opinion about the front/rear split: the F1 26 meta runs packages like springs 41/4 and ARB 1/12, which a
+    "real car" rule of thumb would wrongly call incoherent.
     """
-    Keep spring/ARB packages driveable.
+    return (
+        float(np_clip(spring_f, 1, 41)),
+        float(np_clip(spring_r, 1, 41)),
+        float(np_clip(arb_f, 1, 21)),
+        float(np_clip(arb_r, 1, 21)),
+    )
 
-    Front-stiff / rear-floppy (e.g. 41/3 springs + ARB 1/15) produces cartoon
-    understeer then sudden oversteer. Keep a normal F–R spring split and ARBs
-    within a few clicks of each other.
+
+# Race fuel (kg) per track, kept from the earlier hand-written table; the generator plans fuel from measured laps.
+FUEL_RACE_KG: dict[str, float] = {
+    "Bahrain": 52, "Jeddah": 50, "Melbourne": 48, "Suzuka": 50, "Shanghai": 50, "Miami": 48, "Imola": 46,
+    "Monaco": 40, "Montreal": 46, "Barcelona": 50, "Spielberg": 42, "Silverstone": 50, "Hungaroring": 44, "Spa": 52,
+    "Zandvoort": 44, "Monza": 48, "Baku": 50, "Singapore": 48, "Austin": 50, "Mexico City": 46, "Interlagos": 46,
+    "Las Vegas": 50, "Lusail": 50, "Yas Marina": 48,
+}
+FUEL_RACE_DEFAULT_KG = 50.0
+FUEL_QUALI_KG = 5.0
+
+
+def character_of(rear_wing: float) -> str:
+    """Downforce character of a track from its baseline rear wing (used by the setup builder's wing rules)."""
+    if rear_wing <= 10:
+        return "low_drag"
+    if rear_wing <= 20:
+        return "medium_low"
+    if rear_wing <= 30:
+        return "medium"
+    if rear_wing <= 40:
+        return "medium_high"
+    return "high_df"
+
+
+def _pack(track: str, p: dict[str, Any]) -> dict[str, Any]:
+    """One preset (``setup_presets_data.PRESETS`` row) as the quali / race garage dicts in SRT storage units.
+
+    The preset is a race setup; quali differs only by fuel (parc fermé: same car for both).
     """
-    sf = np_clip(spring_f, 30, 40)
-    sr = np_clip(spring_r, 12, 22)
-    split = sf - sr
-    if split > 20:
-        sr = np_clip(sf - 18, 12, 22)
-    elif split < 10:
-        sr = np_clip(sf - 14, 12, 22)
-        if sf - sr < 10:
-            sf = np_clip(sr + 14, 30, 40)
-
-    af = np_clip(arb_f, 7, 15)
-    ar = np_clip(arb_r, 7, 15)
-    if abs(af - ar) > 3:
-        mid = round((af + ar) / 2)
-        if arb_f >= arb_r:
-            af, ar = float(np_clip(mid + 1, 7, 15)), float(np_clip(mid - 1, 7, 15))
-        else:
-            af, ar = float(np_clip(mid - 1, 7, 15)), float(np_clip(mid + 1, 7, 15))
-    return float(sf), float(sr), float(af), float(ar)
-
-
-def _pack(
-    *,
-    fw: float,
-    rw: float,
-    notes: str,
-    fuel_quali: float = 5.0,
-    fuel_race: float = 55.0,
-    spring_f: float = 37.0,
-    spring_r: float = 17.0,
-    arb_f: float = 10.0,
-    arb_r: float = 10.0,
-    bias: float = 0.57,
-    brake_press: float = 0.95,
-    press_f: float = 25.0,
-    press_r: float = 21.5,
-    ride_f: float = 21.0,
-    ride_r: float = 45.0,
-    diff_on: float = 0.65,
-    diff_off: float = 0.35,
-    camber_f: float = -3.50,
-    camber_r: float = -2.00,
-    toe_f: float = 0.05,
-    toe_r: float = 0.13,
-    character: str = "balanced",
-) -> dict[str, Any]:
-    """press_* in psi; ride_f 15–35, ride_r 40–60."""
-    ride_f = float(np_clip(ride_f, 15, 35))
-    ride_r = float(np_clip(ride_r, 40, 60))
-    fuel_quali = float(np_clip(fuel_quali, 5, 110))
-    fuel_race = float(np_clip(fuel_race, 5, 110))
-    spring_f, spring_r, arb_f, arb_r = coherent_suspension(spring_f, spring_r, arb_f, arb_r)
-    pf = psi_to_pa(press_f)
-    pr = psi_to_pa(press_r)
-    quali = deepcopy(_BASE)
-    quali.update(
+    fl, fr, rl, rr = (psi_to_pa(x) for x in p["psi"])
+    race = deepcopy(_BASE)
+    race.update(
         {
-            "fuel_setup": fuel_quali,
-            "wing_setup_0": float(fw),
-            "wing_setup_1": float(rw),
-            "diff_onThrottle_setup": float(diff_on),
-            "diff_offThrottle_setup": float(diff_off),
-            "camber_setup_0": float(camber_f),
-            "camber_setup_1": float(camber_r),
-            "toe_setup_0": float(toe_f),
-            "toe_setup_1": float(toe_r),
-            "susp_spring_setup_0": float(spring_f),
-            "susp_spring_setup_1": float(spring_r),
-            "arb_setup_0": float(arb_f),
-            "arb_setup_1": float(arb_r),
-            "susp_height_setup_0": ride_f,
-            "susp_height_setup_1": ride_f,
-            "susp_height_setup_2": ride_r,
-            "susp_height_setup_3": ride_r,
-            "brake_bias_setup": float(bias),
-            "front_brake_bias": float(bias),
-            "brake_press_setup": float(brake_press),
-            "tyre_press_setup_0": pf,
-            "tyre_press_setup_1": pf,
-            "tyre_press_setup_2": pr,
-            "tyre_press_setup_3": pr,
+            "fuel_setup": float(FUEL_RACE_KG.get(track.removesuffix(" Reverse"), FUEL_RACE_DEFAULT_KG)),
+            "wing_setup_0": float(p["fw"]),
+            "wing_setup_1": float(p["rw"]),
+            "diff_onThrottle_setup": float(p["diff_on"]),
+            "diff_offThrottle_setup": float(p["diff_off"]),
+            "camber_setup_0": float(p["camber_f"]),
+            "camber_setup_1": float(p["camber_r"]),
+            "toe_setup_0": float(p["toe_f"]),
+            "toe_setup_1": float(p["toe_r"]),
+            "susp_spring_setup_0": float(p["spring_f"]),
+            "susp_spring_setup_1": float(p["spring_r"]),
+            "arb_setup_0": float(p["arb_f"]),
+            "arb_setup_1": float(p["arb_r"]),
+            "susp_height_setup_0": float(p["ride_f"]),
+            "susp_height_setup_1": float(p["ride_f"]),
+            "susp_height_setup_2": float(p["ride_r"]),
+            "susp_height_setup_3": float(p["ride_r"]),
+            "brake_bias_setup": float(p["bias"]),
+            "front_brake_bias": float(p["bias"]),
+            "brake_press_setup": float(p["brake_press"]),
+            "tyre_press_setup_0": fl,
+            "tyre_press_setup_1": fr,
+            "tyre_press_setup_2": rl,
+            "tyre_press_setup_3": rr,
         }
     )
-    race = deepcopy(quali)
-    race["wing_setup_1"] = min(50.0, rw + 1.0)
-    race["diff_onThrottle_setup"] = min(1.0, diff_on + 0.05)
-    race["fuel_setup"] = fuel_race
-    race["tyre_press_setup_0"] = psi_to_pa(min(29.5, press_f + 0.3))
-    race["tyre_press_setup_1"] = psi_to_pa(min(29.5, press_f + 0.3))
-    race["tyre_press_setup_2"] = psi_to_pa(min(26.5, press_r + 0.3))
-    race["tyre_press_setup_3"] = psi_to_pa(min(26.5, press_r + 0.3))
-    return {
-        "character": character,
-        "notes": notes,
-        "quali": quali,
-        "race": race,
-    }
+    quali = deepcopy(race)
+    quali["fuel_setup"] = FUEL_QUALI_KG
+    notes = f"{SOURCE['file']} · {SOURCE['sheet']} ({p['label']})"
+    if p.get("strategy"):
+        notes += f" · strategy: {p['strategy']}"
+    return {"character": character_of(p["rw"]), "notes": notes, "quali": quali, "race": race}
 
 
-TRACK_TYPICAL_SETUPS: dict[str, dict[str, Any]] = {
-    "Bahrain": _pack(
-        fw=44, rw=25, character="medium",
-        notes="Medium DF desert track — firm front spring, ARB 12/10, RH 20/44.",
-        spring_f=37, spring_r=19, arb_f=12, arb_r=10, bias=0.56, fuel_race=52,
-        press_f=25.0, press_r=21.4, ride_f=20, ride_r=44,
-        diff_on=1.0, diff_off=0.45, toe_f=0.00, toe_r=0.10,
-    ),
-    "Jeddah": _pack(
-        fw=22, rw=18, character="low_drag",
-        notes="High-speed street circuit — prioritise top speed, keep rear for blind kinks.",
-        spring_f=38, spring_r=14, arb_f=11, arb_r=12, bias=0.56, fuel_race=50,
-        press_f=26.0, press_r=22.0, ride_f=22, ride_r=48,
-        diff_on=0.95, diff_off=0.35,
-    ),
-    "Melbourne": _pack(
-        fw=32, rw=28, character="medium",
-        notes="Stop-go street layout — braking stability and rotation for 90° corners.",
-        spring_f=36, spring_r=16, arb_f=11, arb_r=10, bias=0.56, fuel_race=48,
-        press_f=24.5, press_r=21.5, ride_f=22, ride_r=48,
-        diff_on=0.80, diff_off=0.35,
-    ),
-    "Suzuka": _pack(
-        fw=34, rw=28, character="high_df",
-        notes="High-speed flowing corners — aero platform through Esses / 130R.",
-        spring_f=38, spring_r=15, arb_f=10, arb_r=12, bias=0.56, fuel_race=50,
-        press_f=25.5, press_r=22.0, ride_f=22, ride_r=47,
-        diff_on=0.90, diff_off=0.40,
-    ),
-    "Shanghai": _pack(
-        fw=30, rw=26, character="medium",
-        notes="Long T1–T3 + hairpin — front for the snake, traction for T14.",
-        spring_f=37, spring_r=16, arb_f=12, arb_r=10, bias=0.56, fuel_race=50,
-        press_f=25.0, press_r=21.5, ride_f=22, ride_r=48,
-    ),
-    "Miami": _pack(
-        fw=30, rw=25, character="medium",
-        notes="From in-game Miami SQ baseline — springs 37/17, ARB 10/10, RH 21/45, 26.5/23.5 psi.",
-        spring_f=37, spring_r=17, arb_f=10, arb_r=10, bias=0.55, fuel_race=48,
-        press_f=26.5, press_r=23.5, ride_f=21, ride_r=45,
-        diff_on=0.65, diff_off=0.35,
-        camber_f=-3.50, camber_r=-2.00, toe_f=0.04, toe_r=0.13,
-    ),
-    "Imola": _pack(
-        fw=33, rw=28, character="medium_high",
-        notes="Kerbs and direction changes — slightly higher DF, compliant ride.",
-        spring_f=35, spring_r=14, arb_f=10, arb_r=10, bias=0.55, fuel_race=46,
-        press_f=24.5, press_r=21.5, ride_f=23, ride_r=50,
-        diff_on=0.80, diff_off=0.35,
-    ),
-    "Monaco": _pack(
-        fw=50, rw=50, character="high_df",
-        notes="Max DF street — soft-but-matched ARBs, compliant rear (not floppy).",
-        spring_f=36, spring_r=16, arb_f=8, arb_r=8, bias=0.56, fuel_race=40,
-        press_f=23.45, press_r=20.5, ride_f=23, ride_r=51,
-        diff_on=0.75, diff_off=0.28, toe_f=0.00, toe_r=0.10,
-    ),
-    "Montreal": _pack(
-        fw=26, rw=22, character="medium_low",
-        notes="Heavy braking + walls — strong bite, decent straight speed.",
-        spring_f=38, spring_r=14, arb_f=12, arb_r=11, bias=0.57, fuel_race=46,
-        press_f=26.0, press_r=22.0, ride_f=22, ride_r=48,
-        diff_on=0.90, diff_off=0.35,
-    ),
-    "Barcelona": _pack(
-        fw=35, rw=30, character="high_df",
-        notes="Aero test track — higher DF, stable mid-corner through T3/T9.",
-        spring_f=38, spring_r=15, arb_f=11, arb_r=12, bias=0.56, fuel_race=50,
-        press_f=25.0, press_r=21.8, ride_f=22, ride_r=47,
-        diff_on=0.90, diff_off=0.40,
-    ),
-    "Spielberg": _pack(
-        fw=28, rw=24, character="medium_low",
-        notes="Short lap, big stops — bias and traction matter more than peak DF.",
-        spring_f=37, spring_r=15, arb_f=12, arb_r=10, bias=0.56, fuel_race=42,
-        press_f=25.5, press_r=21.5, ride_f=21, ride_r=46,
-        diff_on=0.95, diff_off=0.40,
-    ),
-    "Silverstone": _pack(
-        fw=32, rw=28, character="medium_high",
-        notes="Fast direction changes — Maggotts/Becketts need aero + rear support.",
-        spring_f=38, spring_r=15, arb_f=10, arb_r=12, bias=0.56, fuel_race=50,
-        press_f=25.5, press_r=22.0, ride_f=22, ride_r=47,
-        diff_on=0.90, diff_off=0.40,
-    ),
-    "Hungaroring": _pack(
-        fw=42, rw=40, character="high_df",
-        notes="Twisty permanent track — high DF, matched softish platform for traction.",
-        spring_f=35, spring_r=16, arb_f=9, arb_r=9, bias=0.56, fuel_race=44,
-        press_f=24.0, press_r=21.0, ride_f=23, ride_r=50,
-        diff_on=0.70, diff_off=0.30,
-    ),
-    "Spa": _pack(
-        fw=20, rw=8, character="low_drag",
-        notes="Eau Rouge + Kemmel — low drag with a coherent firm platform (not split ARBs).",
-        spring_f=38, spring_r=16, arb_f=10, arb_r=11, bias=0.57, fuel_race=52,
-        press_f=26.65, press_r=21.5, ride_f=23, ride_r=48,
-        diff_on=1.0, diff_off=0.30, toe_f=0.00, toe_r=0.10,
-    ),
-    "Zandvoort": _pack(
-        fw=38, rw=36, character="high_df",
-        notes="Banked corners — high DF, careful pressures, strong front axle.",
-        spring_f=37, spring_r=15, arb_f=10, arb_r=10, bias=0.56, fuel_race=44,
-        press_f=24.5, press_r=21.2, ride_f=23, ride_r=50,
-        diff_on=0.80, diff_off=0.35,
-    ),
-    "Monza": _pack(
-        fw=11, rw=4, character="low_drag",
-        notes="Temple of speed — low wing, firm but matched springs/ARBs (no 41/3 chaos).",
-        spring_f=39, spring_r=18, arb_f=11, arb_r=12, bias=0.57, fuel_race=48,
-        press_f=28.5, press_r=24.5, ride_f=23, ride_r=48,
-        diff_on=0.90, diff_off=0.30, toe_f=0.00, toe_r=0.10,
-    ),
-    "Baku": _pack(
-        fw=18, rw=14, character="low_drag",
-        notes="Long straight + castle section — low drag, rotation for street 90°s.",
-        spring_f=38, spring_r=16, arb_f=10, arb_r=11, bias=0.57, fuel_race=50,
-        press_f=27.0, press_r=23.0, ride_f=22, ride_r=48,
-        diff_on=0.90, diff_off=0.30,
-    ),
-    "Singapore": _pack(
-        fw=45, rw=42, character="high_df",
-        notes="Night street marathon — high DF, soft matched platform.",
-        spring_f=34, spring_r=15, arb_f=8, arb_r=8, bias=0.56, fuel_race=48,
-        press_f=23.5, press_r=20.8, ride_f=24, ride_r=52,
-        diff_on=0.70, diff_off=0.28,
-    ),
-    "Austin": _pack(
-        fw=32, rw=28, character="medium",
-        notes="COTA Esses + stadium — aero for T1–T6, traction for T11–T15.",
-        spring_f=37, spring_r=15, arb_f=11, arb_r=11, bias=0.56, fuel_race=50,
-        press_f=25.0, press_r=21.8, ride_f=22, ride_r=48,
-    ),
-    "Mexico City": _pack(
-        fw=38, rw=34, character="high_df",
-        notes="Altitude / thin air — run more wing than sea-level tracks of similar layout.",
-        spring_f=36, spring_r=14, arb_f=10, arb_r=10, bias=0.56, fuel_race=46,
-        press_f=24.5, press_r=21.5, ride_f=23, ride_r=49,
-        diff_on=0.85, diff_off=0.40,
-    ),
-    "Interlagos": _pack(
-        fw=30, rw=26, character="medium",
-        notes="S do Senna + bumpy — responsive front, compliant ride, mixed DF.",
-        spring_f=35, spring_r=14, arb_f=11, arb_r=10, bias=0.56, fuel_race=46,
-        press_f=25.0, press_r=21.5, ride_f=23, ride_r=50,
-        diff_on=0.85, diff_off=0.35,
-    ),
-    "Las Vegas": _pack(
-        fw=16, rw=10, character="low_drag",
-        notes="Strip straights — strip wing, strong cooling, stable high-speed rear.",
-        spring_f=39, spring_r=12, arb_f=10, arb_r=13, bias=0.57, fuel_race=50,
-        press_f=28.0, press_r=24.0, ride_f=22, ride_r=47,
-        diff_on=0.95, diff_off=0.35,
-    ),
-    "Lusail": _pack(
-        fw=30, rw=26, character="medium",
-        notes="Fast flowing desert lap — medium DF, watch rear temps.",
-        spring_f=37, spring_r=15, arb_f=11, arb_r=11, bias=0.56, fuel_race=50,
-        press_f=25.5, press_r=22.0, ride_f=22, ride_r=48,
-    ),
-    "Yas Marina": _pack(
-        fw=30, rw=26, character="medium",
-        notes="Technical sector 2–3 — balance straight speed with hotel-section rotation.",
-        spring_f=37, spring_r=16, arb_f=11, arb_r=10, bias=0.56, fuel_race=48,
-        press_f=25.0, press_r=21.5, ride_f=22, ride_r=48,
-    ),
-}
+# Baseline setup per catalogue track, from the imported presets (tools/import_setup_presets.py).
+TRACK_TYPICAL_SETUPS: dict[str, dict[str, Any]] = {track: _pack(track, p) for track, p in PRESETS.items()}
 
 
 def list_tracks_with_setups() -> list[str]:

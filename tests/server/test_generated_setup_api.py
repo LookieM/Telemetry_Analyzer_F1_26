@@ -27,7 +27,7 @@ def test_catalogue_only_track_is_prior_only_and_low(empty_client):
     assert g["track"] == "Suzuka" and g["profile"]["source"] == "catalogue"
     assert g["overall_confidence"] == "low" and g["group_confidence"] == {"aero": "low", "mechanical": "low"}
     fw = g["setup"]["wing_setup_0"]
-    assert fw["source"] == "prior" and fw["confidence"] == "low" and fw["evidence"] == [] and fw["display"] == 34
+    assert fw["source"] == "prior" and fw["confidence"] == "low" and fw["evidence"] == [] and fw["display"] == 24  # Suzuka preset FW 24
     assert g["first_test"]["key"] == "wing_setup_0" and "prior only" in g["first_test"]["text"]
     assert g["fuel"]["quali_kg"] == 5 and 5 <= g["fuel"]["race_kg"] <= 110 and g["fuel"]["source"] == "default kg/km"
     assert g["setup"]["fuel_setup"]["value"] == g["fuel"]["race_kg"]

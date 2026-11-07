@@ -98,13 +98,13 @@ def test_left_right_mirrored():
     assert s["susp_height_setup_0"]["evidence"][0]["value"] == pytest.approx(22)  # axle mean
 
 
-def test_suspension_coherent_and_noted():
-    crazy = [ev("A", "baseline", 1.0, susp_spring_setup_0=41, susp_spring_setup_1=3, arb_setup_0=1, arb_setup_1=21)] * 20
-    s = sg.estimate_setup(crazy, PRIOR)["setup"]
-    sf, sr = s["susp_spring_setup_0"]["value"], s["susp_spring_setup_1"]["value"]
-    af, ar = s["arb_setup_0"]["value"], s["arb_setup_1"]["value"]
-    assert 10 <= sf - sr <= 20 and abs(af - ar) <= 3
-    assert any("note" in s[k] for k in ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1"))
+def test_meta_suspension_package_is_kept():
+    # springs 41/4 + ARB 1/12 is a normal F1 26 meta package: no "coherence" rule may rewrite it
+    meta = [ev("A", "baseline", 1.0, susp_spring_setup_0=41, susp_spring_setup_1=4, arb_setup_0=1, arb_setup_1=12)] * 20
+    s = sg.estimate_setup(meta, PRIOR)["setup"]
+    got = [s[k]["value"] for k in ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1")]
+    assert all(abs(g - m) <= 1 for g, m in zip(got, (41, 4, 1, 12)))  # only the blend with the prior moves it
+    assert not any("note" in s[k] for k in ("susp_spring_setup_0", "susp_spring_setup_1", "arb_setup_0", "arb_setup_1"))
 
 
 def test_camber_stays_at_meta_whatever_the_evidence():
@@ -135,8 +135,8 @@ def test_prior_for_every_catalogue_layout():
     for track in TRACK_LENGTHS_M:
         prior, src = sg.prior_for(track)
         assert "wing_setup_0" in prior and "fuel_setup" not in prior and src
-    assert sg.prior_for("Zandvoort Reverse")[1] == "forward layout"
-    assert sg.prior_for("Madring")[1] == "table median"
+        assert src == "table"  # every catalogue layout (Madring and the reverse layouts included) has its own preset
+    assert sg.prior_for("Zandvoort Reverse")[0]["wing_setup_0"] != sg.prior_for("Zandvoort")[0]["wing_setup_0"]
 
 
 # ------------------------------------------------------------------ fuel
