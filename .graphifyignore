@@ -1,0 +1,9 @@
+# Agent worktrees and skills are copies, not project code
+.claude/
+.agents/
+# Stray tsc output next to the .ts/.tsx sources (none of these are tracked)
+frontend/src/**/*.js
+frontend/e2e/**/*.js
+# Build output and the graph itself
+desktop_build/
+graphify-out/

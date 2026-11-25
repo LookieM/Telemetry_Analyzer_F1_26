@@ -220,6 +220,15 @@ test("planner works for any track and deep links survive a reload", async ({ pag
     await expect(page.getByTestId("best-plan")).toContainText("-stop")
     await page.getByLabel("Track", { exact: true }).selectOption("Bahrain")
     await expect(page.getByTestId("model-sources")).toContainText("#2", { timeout: 20_000 }) // the Bahrain race
+    // tyre sets: none known -> add one new set per compound, the plan is limited to them, then clear
+    await expect(page.getByTestId("tyre-sets")).toContainText("unlimited")
+    await page.getByTestId("tyre-sets-edit").click()
+    await page.getByTestId("tyre-sets-save").click()
+    await expect(page.getByTestId("use-inventory")).toBeChecked({ timeout: 20_000 })
+    await expect(page.getByTestId("tyre-sets")).toContainText("set by you")
+    await expect(page.getByTestId("tyre-sets")).toContainText("1 new")
+    await page.getByRole("button", { name: "Clear" }).click()
+    await expect(page.getByTestId("tyre-sets")).toContainText("unlimited", { timeout: 20_000 })
     await page.reload()
     await expect(page.getByTestId("planner")).toBeVisible()
     await page.goto(`/session/${austriaId}/tyres`)

@@ -6,6 +6,11 @@ Lap time on lap i (0-based) of a stint on compound c at tyre age a:
     base + offset_c + deg_c * a + deg2_c * a^2 + warmup_c * [a == 0] + k_fuel * (fuel_i - 5 kg)
 Each stop adds the pit loss. A stint may not run past the wear limit.
 Stint costs are additive and order-free, so a plan is a multiset of (compound, stint length).
+
+With a tyre-set inventory ({compound: [wear % of each set you have]}) a compound runs at most as
+many stints as you have sets of it, the freshest first, and a used set starts its stint at the
+equivalent age wear / wear-rate (slower, fewer laps to the wear limit). Without one every stint
+is on a new set and the sets are unlimited.
 """
 
 from __future__ import annotations
@@ -57,14 +62,23 @@ class CompoundSpec:
     source: str = "measured"
     use: bool = True
 
-    def max_laps(self, wear_limit: float, race_laps: int) -> int:
+    def max_laps(self, wear_limit: float, race_laps: int, start_wear: float = 0.0) -> int:
+        """Laps to the wear limit; a used set (``start_wear`` %) has fewer, 0 when already past it."""
         if not self.wear_pct_per_lap or self.wear_pct_per_lap <= 1e-6:
             return race_laps
-        return max(1, min(race_laps, int(wear_limit / self.wear_pct_per_lap)))
+        if start_wear <= 0:
+            return max(1, min(race_laps, int(wear_limit / self.wear_pct_per_lap)))
+        return max(0, min(race_laps, int((wear_limit - start_wear) / self.wear_pct_per_lap + 1e-9)))
 
-    def lap_deltas(self, n: int) -> np.ndarray:
-        """Time over base pace for tyre ages 0..n-1 (warm-up on the first lap)."""
-        a = np.arange(n, dtype=float)
+    def start_age(self, wear: float) -> float:
+        """Equivalent tyre age (laps) of a set already worn ``wear`` %."""
+        if wear <= 0 or not self.wear_pct_per_lap or self.wear_pct_per_lap <= 1e-6:
+            return 0.0
+        return float(wear) / self.wear_pct_per_lap
+
+    def lap_deltas(self, n: int, start_age: float = 0.0) -> np.ndarray:
+        """Time over base pace for tyre ages start..start+n-1 (warm-up on the first lap)."""
+        a = float(start_age) + np.arange(n, dtype=float)
         out = self.offset_s + self.deg_s_per_lap * a + self.deg2_s * a**2
         if n:
             out[0] += self.warmup_s
@@ -101,6 +115,7 @@ class Plan:
     stints: tuple[int, ...]
     race_time: float
     windows: list[tuple[int, int]] = field(default_factory=list)
+    start_wear: tuple[float, ...] = ()  # wear % of each stint's set at fitting (empty = all new)
 
     @property
     def stops(self) -> int:
@@ -111,8 +126,15 @@ class Plan:
         """Box at the end of these laps (1-based lap counts)."""
         return [int(x) for x in np.cumsum(self.stints)[:-1]]
 
+    def wears(self) -> tuple[float, ...]:
+        return self.start_wear or tuple(0.0 for _ in self.compounds)
+
     def describe(self, specs: dict[int, CompoundSpec]) -> str:
-        return " → ".join(f"{_short(specs, c)} {n}" for c, n in zip(self.compounds, self.stints))
+        return " → ".join(f"{_short(specs, c)}{_used(w)} {n}" for c, n, w in zip(self.compounds, self.stints, self.wears()))
+
+
+def _used(wear: float | None) -> str:
+    return f" (used {wear:.0f}%)" if wear is not None and wear >= 0.5 else ""
 
 
 def _short(specs: dict[int, CompoundSpec], code: int) -> str:
@@ -277,24 +299,95 @@ def apply_overrides(
 # --------------------------------------------------------------------------- costs
 
 
-class _Costs:
-    """Cumulative stint costs per compound: cost[c][L] = time over base for a fresh L-lap stint."""
+@dataclass
+class _Slot:
+    """One tyre set: cumulative stint cost raw[L] / capped[L] (INF past the wear limit) for L laps on it."""
 
-    def __init__(self, specs: list[CompoundSpec], params: RaceParams):
+    wear: float
+    raw: np.ndarray
+    capped: np.ndarray
+    max_laps: int
+
+
+Inventory = dict[int, list[float]]  # {compound: [wear % of each available set]}
+State = tuple[frozenset[int], tuple[int, ...]]  # (compounds run so far, sets consumed per compound)
+
+
+class _Costs:
+    """Cumulative stint costs per compound: cost[c][L] = time over base for a fresh L-lap stint.
+
+    With ``inventory`` each compound has its own list of sets (freshest first), each with its own
+    curve; ``slot(c, k)`` is the k-th freshest set. Without one every set is new and unlimited.
+    """
+
+    def __init__(self, specs: list[CompoundSpec], params: RaceParams, inventory: Inventory | None = None):
         self.params = params
         self.specs = {s.code: s for s in specs if s.use}
         self.raw: dict[int, np.ndarray] = {}
         self.capped: dict[int, np.ndarray] = {}
         self.max_laps: dict[int, int] = {}
-        R = params.laps
+        self._fresh: dict[int, _Slot] = {}
         for code, s in self.specs.items():
-            cum = np.concatenate([[0.0], np.cumsum(s.lap_deltas(R))])
-            self.raw[code] = cum
-            m = s.max_laps(params.wear_limit_pct, R)
-            self.max_laps[code] = m
-            capped = cum.copy()
-            capped[m + 1 :] = INF
-            self.capped[code] = capped
+            slot = self._slot_for(s, 0.0)
+            self._fresh[code] = slot
+            self.raw[code], self.capped[code], self.max_laps[code] = slot.raw, slot.capped, slot.max_laps
+        self.sets: dict[int, list[_Slot]] | None = None
+        if inventory is not None:
+            keep = params.max_stops + 1  # no plan fits more sets than stints
+            self.sets = {}
+            for code, s in self.specs.items():
+                slots = [self._slot_for(s, w) for w in sorted(float(x) for x in inventory.get(code, []))[:keep]]
+                self.sets[code] = [x for x in slots if x.max_laps >= 1]
+        self.codes = list(self.specs)
+
+    def _slot_for(self, s: CompoundSpec, wear: float) -> _Slot:
+        R = self.params.laps
+        cum = np.concatenate([[0.0], np.cumsum(s.lap_deltas(R, s.start_age(wear)))])
+        m = s.max_laps(self.params.wear_limit_pct, R, wear)
+        capped = cum.copy()
+        capped[m + 1 :] = INF
+        return _Slot(float(wear), cum, capped, m)
+
+    def n_sets(self, code: int) -> int | None:
+        """Usable sets of this compound, None = unlimited (no inventory)."""
+        return None if self.sets is None else len(self.sets.get(code, []))
+
+    def slot(self, code: int, k: int = 0) -> _Slot:
+        return self._fresh[code] if self.sets is None else self.sets[code][k]
+
+    def fits(self, compounds: tuple[int, ...]) -> bool:
+        if self.sets is None:
+            return True
+        return all(compounds.count(c) <= (self.n_sets(c) or 0) for c in set(compounds))
+
+    def slots_of(self, compounds: tuple[int, ...]) -> list[_Slot] | None:
+        """The set each stint runs on: the k-th time a compound appears it gets its k-th freshest set."""
+        compounds = tuple(compounds)
+        if any(c not in self.specs for c in compounds) or not self.fits(compounds):
+            return None
+        seen: dict[int, int] = {}
+        out = []
+        for c in compounds:
+            k = seen.get(c, 0)
+            seen[c] = k + 1
+            out.append(self.slot(c, k))
+        return out
+
+    def start_state(self, used: frozenset[int] = frozenset()) -> State:
+        return frozenset(used), (tuple(0 for _ in self.codes) if self.sets is not None else ())
+
+    def next_state(self, state: State, code: int) -> State | None:
+        """State after fitting the next set of ``code``; None when no set of it is left."""
+        mask, cnt = state
+        if self.sets is not None:
+            i = self.codes.index(code)
+            if cnt[i] >= len(self.sets[code]):
+                return None
+            cnt = cnt[:i] + (cnt[i] + 1,) + cnt[i + 1 :]
+        return mask | {code}, cnt
+
+    def next_slot(self, state: State, code: int) -> _Slot:
+        return self.slot(code, state[1][self.codes.index(code)] if self.sets is not None else 0)
 
     def dry_codes(self) -> set[int]:
         return {c for c in self.specs if is_slick(c)}
@@ -311,15 +404,18 @@ class _Costs:
 
 def _best_lengths(seq: tuple[int, ...], costs: _Costs) -> tuple[float, tuple[int, ...]] | None:
     R = costs.params.laps
+    slots = costs.slots_of(seq)
+    if slots is None:
+        return None
     best = np.full(R + 1, INF)
     best[0] = 0.0
     backs = []
-    for code in seq:
-        cost = costs.capped[code]
+    for slot in slots:
+        cost = slot.capped
         new = np.full(R + 1, INF)
         arg = np.zeros(R + 1, dtype=int)
         for m in range(1, R + 1):
-            ls = np.arange(1, min(m, costs.max_laps[code]) + 1)
+            ls = np.arange(1, min(m, slot.max_laps) + 1)
             if not ls.size:
                 continue
             vals = best[m - ls] + cost[ls]
@@ -337,8 +433,10 @@ def _best_lengths(seq: tuple[int, ...], costs: _Costs) -> tuple[float, tuple[int
 
 
 def _plan_cost(compounds: tuple[int, ...], stints: tuple[int, ...], costs: _Costs, *, capped: bool = True) -> float:
-    table = costs.capped if capped else costs.raw
-    total = sum(table[c][n] for c, n in zip(compounds, stints))
+    slots = costs.slots_of(tuple(compounds))
+    if slots is None:
+        return INF
+    total = sum((x.capped if capped else x.raw)[n] for x, n in zip(slots, stints))
     return costs.constant() + total + (len(stints) - 1) * costs.params.pit_loss_s
 
 
@@ -361,23 +459,28 @@ def _windows(plan: Plan, costs: _Costs) -> list[tuple[int, int]]:
     return out
 
 
-def optimise(specs: list[CompoundSpec], params: RaceParams) -> list[Plan]:
-    """Every feasible compound multiset with up to max_stops stops, best stint lengths, fastest first."""
-    costs = _Costs(specs, params)
-    codes = sorted(costs.specs, key=softness, reverse=True)
+def optimise(specs: list[CompoundSpec], params: RaceParams, inventory: Inventory | None = None) -> list[Plan]:
+    """Every feasible compound multiset with up to max_stops stops, best stint lengths, fastest first.
+
+    With ``inventory`` only the sets you have (see the module docstring).
+    """
+    costs = _Costs(specs, params, inventory)
+    codes = [c for c in sorted(costs.specs, key=softness, reverse=True) if costs.n_sets(c) != 0]
     plans: list[Plan] = []
     seen: set[tuple[int, ...]] = set()
     for n_stints in range(1, params.max_stops + 2):
         for combo in itertools.combinations_with_replacement(codes, n_stints):
             key = tuple(sorted(combo))
-            if key in seen or not costs.valid(frozenset(combo)):
+            if key in seen or not costs.valid(frozenset(combo)) or not costs.fits(combo):
                 continue
             seen.add(key)
             res = _best_lengths(combo, costs)
             if res is None:
                 continue
             total, lens = res
-            plan = Plan(compounds=combo, stints=lens, race_time=costs.constant() + total + (n_stints - 1) * params.pit_loss_s)
+            wears = tuple(x.wear for x in costs.slots_of(combo)) if costs.sets is not None else ()
+            plan = Plan(compounds=combo, stints=lens, race_time=costs.constant() + total + (n_stints - 1) * params.pit_loss_s,
+                        start_wear=wears)
             plan.windows = _windows(plan, costs)
             plans.append(plan)
     plans.sort(key=lambda p: p.race_time)
@@ -387,7 +490,8 @@ def optimise(specs: list[CompoundSpec], params: RaceParams) -> list[Plan]:
 def lap_times(plan: Plan, specs: list[CompoundSpec], params: RaceParams) -> np.ndarray:
     """Predicted lap times along a plan (pit loss booked on the in-lap of each stop)."""
     by_code = {s.code: s for s in specs}
-    deltas = np.concatenate([by_code[c].lap_deltas(n) for c, n in zip(plan.compounds, plan.stints)])
+    deltas = np.concatenate([by_code[c].lap_deltas(n, by_code[c].start_age(w))
+                             for c, n, w in zip(plan.compounds, plan.stints, plan.wears())])
     t = params.base_pace_s + deltas + params.fuel_times()[: len(deltas)]
     for lap in plan.stop_laps:
         t[lap - 1] += params.pit_loss_s
@@ -420,7 +524,7 @@ SCENARIOS: tuple[tuple[str, dict[str, float]], ...] = (
 )
 
 
-def sensitivity(specs: list[CompoundSpec], params: RaceParams, baseline: Plan) -> pd.DataFrame:
+def sensitivity(specs: list[CompoundSpec], params: RaceParams, baseline: Plan, inventory: Inventory | None = None) -> pd.DataFrame:
     """Best plan under each scenario, and what sticking to the baseline plan would cost there."""
     rows = []
     by_code = {s.code: s for s in specs}
@@ -434,11 +538,11 @@ def sensitivity(specs: list[CompoundSpec], params: RaceParams, baseline: Plan) -
             for s in specs
         ]
         pr = replace(params, pit_loss_s=max(0.0, params.pit_loss_s + mod.get("pit", 0.0)))
-        plans = optimise(sp, pr)
+        plans = optimise(sp, pr, inventory)
         if not plans:
             continue
         best = plans[0]
-        costs = _Costs(sp, pr)
+        costs = _Costs(sp, pr, inventory)
         base_t = _plan_cost(baseline.compounds, baseline.stints, costs)
         same = sorted(best.compounds) == sorted(baseline.compounds) and best.stops == baseline.stops
         rows.append(
@@ -455,31 +559,45 @@ def sensitivity(specs: list[CompoundSpec], params: RaceParams, baseline: Plan) -
 # --------------------------------------------------------------------------- in-race calls
 
 
-def _cost_to_go(costs: _Costs) -> tuple[dict[frozenset[int], np.ndarray], list[frozenset[int]]]:
+def _cost_to_go(costs: _Costs, start: State | None = None) -> dict[State, np.ndarray]:
     """
-    G[used][n]: best time over base for the last n laps when a new stint starts now (its pit
-    loss already paid), given the compounds used so far.
+    G[state][n]: best time over base for the last n laps when a new stint starts now (its pit
+    loss already paid), given the state (compounds run so far, sets consumed). Only the states
+    reachable from ``start`` (default: nothing run yet) are built.
     """
-    codes = list(costs.specs)
-    masks = [frozenset(m) for r in range(len(codes) + 1) for m in itertools.combinations(codes, r)]
+    start = start if start is not None else costs.start_state()
+    states, queue = {start}, [start]
+    while queue:
+        st = queue.pop()
+        for c in costs.codes:
+            s2 = costs.next_state(st, c)
+            if s2 is not None and s2 not in states:
+                states.add(s2)
+                queue.append(s2)
     R = costs.params.laps
     pit = costs.params.pit_loss_s
-    G = {m: np.full(R + 1, INF) for m in masks}
-    for m in masks:
-        G[m][0] = 0.0 if costs.valid(m) else INF
+    G = {st: np.full(R + 1, INF) for st in states}
+    for st in states:
+        G[st][0] = 0.0 if costs.valid(st[0]) else INF
+    moves = {}
+    for st in states:
+        moves[st] = []
+        for c in costs.codes:
+            s2 = costs.next_state(st, c)
+            if s2 is not None:
+                moves[st].append((costs.next_slot(st, c), s2))
     for n in range(1, R + 1):
-        for m in masks:
+        for st in states:
             best = INF
-            for c in codes:
-                m2 = m | {c}
-                ls = np.arange(1, min(n, costs.max_laps[c]) + 1)
+            for slot, s2 in moves[st]:
+                ls = np.arange(1, min(n, slot.max_laps) + 1)
+                if not ls.size:
+                    continue
                 rest = n - ls
-                tail = np.where(rest > 0, pit + G[m2][rest], np.where(costs.valid(m2), 0.0, INF))
-                vals = costs.capped[c][ls] + tail
-                v = float(np.min(vals)) if vals.size else INF
-                best = min(best, v)
-            G[m][n] = best
-    return G, masks
+                tail = np.where(rest > 0, pit + G[s2][rest], 0.0 if costs.valid(s2[0]) else INF)
+                best = min(best, float(np.min(slot.capped[ls] + tail)))
+            G[st][n] = best
+    return G
 
 
 @dataclass
@@ -493,32 +611,38 @@ class RaceCall:
     undercut_gain_s: float | None  # first lap on new tyres vs one more lap on these
 
 
-def race_calls(plan: Plan, specs: list[CompoundSpec], params: RaceParams) -> pd.DataFrame:
+def race_calls(plan: Plan, specs: list[CompoundSpec], params: RaceParams, inventory: Inventory | None = None) -> pd.DataFrame:
     """Box / stay-out under green and under safety car on every lap along a plan."""
-    costs = _Costs(specs, params)
-    G, _ = _cost_to_go(costs)
+    costs = _Costs(specs, params, inventory)
+    G = _cost_to_go(costs)
     R = params.laps
     rows = []
     lap = 0
-    used: frozenset[int] = frozenset()
-    best_new_first = {}  # best fresh-tyre first-lap delta among compounds
-    for c, s in costs.specs.items():
-        best_new_first[c] = float(s.lap_deltas(1)[0])
+    state = costs.start_state()
+    best_new_first = {}  # best first-lap delta on the freshest set of each compound
+    for c in costs.specs:
+        if costs.n_sets(c) != 0:
+            best_new_first[c] = float(costs.slot(c, 0).raw[1])
     for c, n in zip(plan.compounds, plan.stints):
-        used = used | {c}
+        nxt = costs.next_state(state, c)
+        if nxt is None:
+            break
+        slot = costs.next_slot(state, c)
+        state = nxt
+        used = state[0]
         for age in range(1, n + 1):
             lap += 1
             remaining = R - lap
             if remaining <= 0:
                 break
-            box = params.pit_loss_s + G[used][remaining]
-            sc = params.pit_loss_s * params.sc_pit_factor + G[used][remaining]
+            box = params.pit_loss_s + G[state][remaining]
+            sc = params.pit_loss_s * params.sc_pit_factor + G[state][remaining]
             stay = INF
-            raw = costs.raw[c]
-            for more in range(1, min(remaining, costs.max_laps[c] - age) + 1):
+            raw = slot.raw
+            for more in range(1, min(remaining, slot.max_laps - age) + 1):
                 cost_more = raw[age + more] - raw[age]
                 rest = remaining - more
-                tail = params.pit_loss_s + G[used][rest] if rest > 0 else (0.0 if costs.valid(used) else INF)
+                tail = params.pit_loss_s + G[state][rest] if rest > 0 else (0.0 if costs.valid(used) else INF)
                 stay = min(stay, cost_more + tail)
             old_next = float(raw[age + 1] - raw[age]) if age + 1 < len(raw) else None
             fresh = min(best_new_first.values()) if best_new_first else None
@@ -554,24 +678,25 @@ def plan_from_state(
     compound: int,
     age: int,
     used: frozenset[int] | set[int] | tuple[int, ...],
+    inventory: Inventory | None = None,
 ) -> dict[str, Any] | None:
     """
     Live decision from the current race state (`lap` laps completed, `age` laps on `compound`,
-    `used` = dry compounds run so far incl. this one).
+    `used` = dry compounds run so far incl. this one; `inventory` = the sets still available,
+    the fitted one left out — None treats every set as new and unlimited).
 
     Returns the cost (time over the cheapest continuation, seconds) of boxing now vs staying out,
     under green and under a safety car, the lap window in which boxing stays within
     `window_tolerance_s` of the best, and the compound to fit. None once the race is over or the
     current compound is not in the model.
     """
-    costs = _Costs(specs, params)
+    costs = _Costs(specs, params, inventory)
     remaining = params.laps - int(lap)
     if remaining <= 0 or compound not in costs.specs:
         return None
-    used_set = frozenset(used) | {compound}
-    G, _ = _cost_to_go(costs)
-    if used_set not in G:
-        return None
+    used_set = frozenset(c for c in used if c in costs.specs) | {compound}
+    start = costs.start_state(used_set)
+    G = _cost_to_go(costs, start)
     raw, pit = costs.raw[compound], params.pit_loss_s
     age = max(0, min(int(age), len(raw) - 1))
     max_more = max(0, min(remaining, costs.max_laps[compound] - age))
@@ -583,7 +708,7 @@ def plan_from_state(
         rest = remaining - k
         if rest <= 0:
             return run if stays_to_flag else INF
-        return run + pit_s + G[used_set][rest]
+        return run + pit_s + G[start][rest]
 
     green = [option(k, pit) for k in range(0, max_more + 1)]
     box_now, sc_box = green[0], option(0, pit * params.sc_pit_factor)
@@ -595,15 +720,18 @@ def plan_from_state(
     window = [k for k, v in enumerate(green) if k < remaining and v <= best + params.window_tolerance_s]
     # compound to fit when boxing at the best lap
     rest = remaining - k_best
-    fit, fit_cost = None, INF
+    fit, fit_cost, fit_wear = None, INF, None
     if rest > 0:
         for c in costs.specs:
-            ls = np.arange(1, min(rest, costs.max_laps[c]) + 1)
-            m2 = used_set | {c}
-            tail = np.where(rest - ls > 0, pit + G[m2][np.maximum(rest - ls, 0)], np.where(costs.valid(m2), 0.0, INF))
-            v = float(np.min(costs.capped[c][ls] + tail)) if ls.size else INF
+            s2 = costs.next_state(start, c)
+            if s2 is None:
+                continue
+            slot = costs.next_slot(start, c)
+            ls = np.arange(1, min(rest, slot.max_laps) + 1)
+            tail = np.where(rest - ls > 0, pit + G[s2][np.maximum(rest - ls, 0)], np.where(costs.valid(s2[0]), 0.0, INF))
+            v = float(np.min(slot.capped[ls] + tail)) if ls.size else INF
             if v < fit_cost:
-                fit, fit_cost = c, v
+                fit, fit_cost, fit_wear = c, v, (slot.wear if costs.sets is not None else None)
     return {
         "lap": int(lap),
         "laps_left": remaining,
@@ -616,7 +744,9 @@ def plan_from_state(
         "box_window": [int(lap) + window[0], int(lap) + window[-1]] if (window and np.isfinite(best)) else None,
         "no_more_stops": no_more_stops,
         "fit_compound": fit,
-        "fit_label": _short(costs.specs, fit) if fit is not None else None,
+        "fit_label": _short(costs.specs, fit) + _used(fit_wear) if fit is not None else None,
+        "fit_wear": fit_wear,
+        "sets_left": ({str(c): costs.n_sets(c) for c in costs.specs} if costs.sets is not None else None),
         "can_finish_without_stop": max_more == remaining and bool(np.isfinite(green[-1])),
     }
 

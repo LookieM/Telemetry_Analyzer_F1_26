@@ -10,8 +10,8 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict
 
-from telemetry import strategy, tyres
-from telemetry.compounds import Allocation, get_allocation
+from telemetry import strategy, tyre_inventory, tyres
+from telemetry.compounds import Allocation, c_label, get_allocation
 from telemetry.conditions import _as_state
 from telemetry.corners import normalize_track_name
 from telemetry.strategy import CompoundSpec, Plan, RaceParams
@@ -63,6 +63,21 @@ class OptimiseIn(BaseModel):
     state: str = "dry"
     params: ParamsIn | None = None
     specs: list[SpecIn] | None = None
+    use_inventory: bool = True
+
+
+class TyreSetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    compound: int
+    wear: float = 0.0
+    available: bool = True
+
+
+class TyreSetsIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sets: list[TyreSetIn]
 
 
 @dataclass
@@ -75,6 +90,8 @@ class Inputs:
     params: RaceParams
     saved: bool
     wear_limit: float
+    inventory: strategy.Inventory | None = None  # what the optimiser limits the sets to (None = unlimited new)
+    inventory_record: dict[str, Any] | None = None  # the stored snapshot, also when not used
 
 
 def build_inputs(
@@ -84,8 +101,13 @@ def build_inputs(
     params_in: ParamsIn | None = None,
     specs_in: list[SpecIn] | None = None,
     wear_limit: float | None = None,
+    *,
+    use_inventory: bool = False,
 ) -> Inputs:
-    """Model defaults, then saved overrides, then request overrides (mirrors the Streamlit planner)."""
+    """Model defaults, then saved overrides, then request overrides (mirrors the Streamlit planner).
+
+    ``use_inventory``: limit the plan to the stored tyre sets of the track (when there are any).
+    """
     track_n = normalize_track_name(track) or track
     alloc = get_allocation(track_n, root)
     limit = wear_limit if wear_limit is not None else default_limit(root)
@@ -108,7 +130,22 @@ def build_inputs(
                 raise HTTPException(422, f"Compound {item.code} is not in the {state} model for {track_n}")
             by_code[item.code] = replace(by_code[item.code], **item.model_dump(exclude_none=True, exclude={"code"}), source="manual")
         specs = [by_code[s.code] for s in specs]
-    return Inputs(track_n, state, model, alloc, specs, params, bool(saved_p or saved_c), limit)
+    record = tyre_inventory.get_inventory(track_n, root)
+    # generic placeholder codes (no allocation known) do not match the game's sets: then no limit
+    inv = tyre_inventory.available_wear(record["sets"]) if (use_inventory and record and alloc.source != "none") else None
+    return Inputs(track_n, state, model, alloc, specs, params, bool(saved_p or saved_c), limit, inv, record)
+
+
+def inventory_payload(record: dict[str, Any] | None, used: bool, specs: list[CompoundSpec]) -> dict[str, Any] | None:
+    """The stored tyre sets, plus a per-compound summary (new count, used wears) for the planner."""
+    if not record:
+        return None
+    labels = {s.code: s.label for s in specs}
+    by: dict[str, dict[str, Any]] = {}
+    for code, wears in sorted(tyre_inventory.available_wear(record["sets"]).items()):
+        by[str(code)] = {"label": labels.get(code, c_label(code)), "in_model": code in labels,
+                         "new": sum(1 for w in wears if w < 0.5), "used": [w for w in wears if w >= 0.5]}
+    return {**record, "used": used, "by_compound": by}
 
 
 def plan_json(plan: Plan, by_code: dict[int, CompoundSpec], best_time: float | None = None) -> dict[str, Any]:
@@ -118,6 +155,7 @@ def plan_json(plan: Plan, by_code: dict[int, CompoundSpec], best_time: float | N
         "stops": plan.stops,
         "stop_laps": plan.stop_laps,
         "windows": [list(w) for w in plan.windows],
+        "start_wear": list(plan.wears()),
         "race_time": plan.race_time,
         "label": plan.describe(by_code),
     }
@@ -135,8 +173,8 @@ def params_json(params: RaceParams) -> dict[str, Any]:
 @router.post("/strategy/optimise")
 def optimise(body: OptimiseIn, request: Request) -> Any:
     root = root_of(request)
-    inp = build_inputs(root, body.track, body.state, body.params, body.specs)
-    specs, params = inp.specs, inp.params
+    inp = build_inputs(root, body.track, body.state, body.params, body.specs, use_inventory=body.use_inventory)
+    specs, params, inv = inp.specs, inp.params, inp.inventory
     by_code = {s.code: s for s in specs}
     out: dict[str, Any] = {
         "track": inp.track,
@@ -148,15 +186,19 @@ def optimise(body: OptimiseIn, request: Request) -> Any:
         "sources": inp.model.sources,
         "saved_overrides": inp.saved,
         "allocation": allocation_payload(inp.alloc, [s.code for s in specs]),
+        "inventory": inventory_payload(inp.inventory_record, inv is not None, specs),
         "plans": [],
         "sensitivity": [],
         "calls": [],
         "race_trace": None,
         "message": None,
     }
-    plans = strategy.optimise(specs, params)
+    plans = strategy.optimise(specs, params, inv)
     if not plans:
         out["message"] = (
+            "No feasible plan with your tyre sets: they do not last to the flag at this wear limit, "
+            "or they do not cover two dry compounds. Edit the sets or turn off 'Plan with my sets'."
+            if inv is not None else
             "No feasible plan: every compound runs out before the flag at this wear limit, "
             "or the two-compound rule cannot be met."
         )
@@ -165,8 +207,8 @@ def optimise(body: OptimiseIn, request: Request) -> Any:
     shown = strategy.shortlist(plans, TOP_PLANS)
     out["best"] = plan_json(best, by_code, best.race_time)
     out["plans"] = [plan_json(p, by_code, best.race_time) for p in shown]
-    out["sensitivity"] = strategy.sensitivity(specs, params, best)
-    out["calls"] = strategy.race_calls(best, specs, params)
+    out["sensitivity"] = strategy.sensitivity(specs, params, best, inv)
+    out["calls"] = strategy.race_calls(best, specs, params, inv)
     best_cum = np.cumsum(strategy.lap_times(shown[0], specs, params))
     traces = []
     for p in shown[:CHART_PLANS]:
@@ -174,6 +216,31 @@ def optimise(body: OptimiseIn, request: Request) -> Any:
         traces.append({"label": p.describe(by_code), "lap_times": t, "gap_to_best": np.cumsum(t) - best_cum})
     out["race_trace"] = {"laps": list(range(1, params.laps + 1)), "plans": traces, "box_laps": shown[0].stop_laps}
     return to_jsonable(out)
+
+
+def _tyre_sets(track: str, root: Path) -> dict[str, Any]:
+    track_n = normalize_track_name(track) or track
+    return {"track": track_n, "inventory": tyre_inventory.get_inventory(track_n, root)}
+
+
+@router.get("/tracks/{track}/tyre-sets")
+def read_tyre_sets(track: str, request: Request) -> Any:
+    return _tyre_sets(track, root_of(request))
+
+
+@router.put("/tracks/{track}/tyre-sets")
+def write_tyre_sets(track: str, body: TyreSetsIn, request: Request) -> Any:
+    """Your own list of sets (replaced by the next game snapshot of the track)."""
+    root = root_of(request)
+    tyre_inventory.save_inventory(track, [s.model_dump() for s in body.sets], source="manual", app_root=root)
+    return _tyre_sets(track, root)
+
+
+@router.delete("/tracks/{track}/tyre-sets")
+def delete_tyre_sets(track: str, request: Request) -> Any:
+    root = root_of(request)
+    tyre_inventory.clear_inventory(track, root)
+    return _tyre_sets(track, root)
 
 
 @router.get("/sessions/{session_id}/strategy-review")

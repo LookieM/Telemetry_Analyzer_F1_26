@@ -1,0 +1,4 @@
+# Local config (see telemetria.example.toml for every key).
+# The game sends to 20777 -> this server receives it and relays every packet to SRT and SimHub.
+udp_port = 20777
+forward_to = ["127.0.0.1:20778", "127.0.0.1:20779"]   # SRT on 20778, SimHub on 20779

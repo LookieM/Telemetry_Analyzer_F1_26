@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from telemetry import compounds, engineer_log, tyres
+from telemetry import compounds, engineer_log, tyre_inventory, tyres
 from telemetry.corners import normalize_track_name
 from telemetry.garage import garage_from_raw
 from telemetry.metrics import FUEL_S_PER_KG
@@ -31,6 +31,7 @@ WHEELS = ("RL", "RR", "FL", "FR")  # UDP array order
 WEATHER = ("Clear", "Light cloud", "Overcast", "Light rain", "Heavy rain", "Storm")
 SC_NAMES = ("", "SC", "VSC", "formation")
 FUEL_LAPS_WINDOW = 3
+INVENTORY_SAVE_S = 5.0  # tyre-set snapshot handed to the store at most this often
 
 # (UDP field, label, group). Aero parts cost lap time; only the front wing can be changed in a stop.
 DAMAGE_PARTS = (
@@ -169,6 +170,9 @@ class LiveEngine:
         self._comp_prev: int | None = None
         self.game_tyres_pending: dict | None = None  # picked up by the server loop and stored off-thread
         self._game_tyres_done: tuple | None = None
+        self.tyre_inventory_pending: dict | None = None  # per-set snapshot for the planner, stored off-thread
+        self._inv_sig: tuple | None = None
+        self._inv_t = float("-inf")
         # engineer adapter state: API threads call the commands while the server loop ticks, hence the lock
         self.engineer = Engineer()
         self._eng_lock = threading.Lock()
@@ -217,6 +221,7 @@ class LiveEngine:
         self._comp_prev = None
         self._game_tyres_done = None
         self.game_tyres_pending = None
+        self._inv_sig = None
         self._end_engineer()
         self._reset_lap_marks()
         self._set_first_age = {}
@@ -289,6 +294,7 @@ class LiveEngine:
         self._check_damage(lap_num)
         self._read_events()
         self._collect_game_tyres(sess)
+        self._collect_tyre_inventory(sess)
         self._engineer_tick(me, sess)
 
     def _collect_game_tyres(self, sess) -> None:
@@ -304,6 +310,22 @@ class LiveEngine:
             "track": cols.track_name(int(sess["m_trackId"])), "sets": sets,
             "total_laps": int(sess["m_totalLaps"]) or None,
             "session_type": cols.session_type_name(int(sess["m_sessionType"])),
+        }
+
+    def _collect_tyre_inventory(self, sess) -> None:
+        """Hand the player's sets (count, wear, available) to the server when they change, at most every 5 s."""
+        sets = self._tyre_sets()
+        if not sets:
+            return
+        sig = tuple((x["compound"], x["wear"], x["available"], x["fitted"]) for x in sets)
+        now = time.monotonic()
+        if sig == self._inv_sig or now - self._inv_t < INVENTORY_SAVE_S:
+            return
+        self._inv_sig, self._inv_t = sig, now
+        self.tyre_inventory_pending = {
+            "track": cols.track_name(int(sess["m_trackId"])),
+            "session_type": cols.session_type_name(int(sess["m_sessionType"])),
+            "sets": [{k: x[k] for k in ("compound", "wear", "available", "fitted")} for x in sets],
         }
 
     def _check_damage(self, lap_num: int) -> None:
@@ -865,7 +887,11 @@ class LiveEngine:
             laps_done = int(me["m_currentLapNum"]) - 1
             age = int(st["m_tyresAgeLaps"])
             used = frozenset(self._used | {comp})
-            plan = strat.plan_from_state(inp.specs, inp.params, lap=laps_done, compound=comp, age=age, used=used)
+            sets = self._tyre_sets()  # the game's sets: fit only what is left (the fitted one is this stint)
+            inv = (tyre_inventory.available_wear(sets, exclude_fitted=True)
+                   if sets and inp.alloc.source != "none" else None)  # generic codes would not match the game's
+            plan = strat.plan_from_state(inp.specs, inp.params, lap=laps_done, compound=comp, age=age, used=used,
+                                         inventory=inv)
             if plan is None:
                 in_model = any(sp.code == comp for sp in inp.specs)
                 self.strategy = None if in_model else {

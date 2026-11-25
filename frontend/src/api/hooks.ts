@@ -2,6 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, qs } from "./client"
 import type {
   AllocationPayload,
+  TyreSetsPayload,
   BaselinePayload,
   BaselineRequest,
   ChannelsPayload,
@@ -202,6 +203,14 @@ export const useClearOverrides = () =>
   useInvalidating((v: { track: string; state: string }) =>
     api.send<OverridesPayload>("DELETE", `/tracks/${encodeURIComponent(v.track)}/strategy-overrides${qs({ state: v.state })}`),
   )
+
+export const useSaveTyreSets = () =>
+  useInvalidating((v: { track: string; sets: { compound: number; wear: number }[] }) =>
+    api.send<TyreSetsPayload>("PUT", `/tracks/${encodeURIComponent(v.track)}/tyre-sets`, { sets: v.sets }),
+  )
+
+export const useClearTyreSets = () =>
+  useInvalidating((track: string) => api.send<TyreSetsPayload>("DELETE", `/tracks/${encodeURIComponent(track)}/tyre-sets`))
 
 /** Rebuild a track's corners from one lap; every cached analysis refetches against the new corner set. */
 export const useRebuildCorners = () =>

@@ -95,3 +95,26 @@ def test_review_unavailable_reason(lib_root, race_id):
 
 def test_strategy_review_404(client):
     assert client.get("/api/sessions/999999/strategy-review").status_code == 404
+
+
+def test_tyre_sets_limit_the_plan(client, race_id):
+    assert client.get(f"/api/tracks/{TRACK}/tyre-sets").json()["inventory"] is None
+    free = client.post("/api/strategy/optimise", json={"track": TRACK, "state": "dry"}).json()
+    assert free["inventory"] is None and all(not any(p["start_wear"]) for p in free["plans"])
+    codes = [s["code"] for s in free["specs"]]
+    sets = [{"compound": codes[0], "wear": 0}, {"compound": codes[1], "wear": 25}, {"compound": codes[1], "wear": 0}]
+    if len(codes) > 2:
+        sets.append({"compound": codes[2], "wear": 0})
+    body = client.put(f"/api/tracks/{TRACK}/tyre-sets", json={"sets": sets}).json()
+    assert body["inventory"]["source"] == "manual" and len(body["inventory"]["sets"]) == len(sets)
+    limited = client.post("/api/strategy/optimise", json={"track": TRACK, "state": "dry"}).json()
+    inv = limited["inventory"]
+    assert inv["used"] and inv["by_compound"][str(codes[1])] == {"label": inv["by_compound"][str(codes[1])]["label"],
+                                                                 "in_model": True, "new": 1, "used": [25.0]}
+    have = {codes[0]: 1, codes[1]: 2, **({codes[2]: 1} if len(codes) > 2 else {})}
+    for p in limited["plans"] or []:
+        assert all(p["compounds"].count(c) <= have.get(c, 0) for c in p["compounds"])
+        assert len(p["start_wear"]) == len(p["compounds"])
+    off = client.post("/api/strategy/optimise", json={"track": TRACK, "state": "dry", "use_inventory": False}).json()
+    assert off["inventory"]["used"] is False and off["best"] == free["best"]
+    assert client.delete(f"/api/tracks/{TRACK}/tyre-sets").json()["inventory"] is None

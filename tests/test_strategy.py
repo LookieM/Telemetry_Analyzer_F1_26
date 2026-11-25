@@ -136,3 +136,89 @@ def test_plan_from_state_late_race_says_no_more_stops():
     st = plan_from_state(specs, params, lap=25, compound=20, age=6, used={18, 20})
     assert st["no_more_stops"] and st["call_green"] == "STAY"
     assert st["box_window"] is None or st["box_window"][1] < 30
+
+
+# --------------------------------------------------------------------------- tyre-set inventory
+
+
+def _brute_force_sets(specs, params, inventory):
+    costs = _Costs(specs, params, inventory)
+    best = float("inf")
+    R = params.laps
+    for n in range(1, params.max_stops + 2):
+        for combo in itertools.product(costs.specs, repeat=n):
+            if not costs.valid(frozenset(combo)):
+                continue
+            for cuts in itertools.combinations(range(1, R), n - 1):
+                lens = np.diff([0, *cuts, R])
+                best = min(best, _plan_cost(combo, tuple(int(x) for x in lens), costs))
+    return best
+
+
+def test_sets_dp_matches_brute_force_with_used_sets():
+    params = RaceParams(laps=14, pit_loss_s=8.0, base_pace_s=90.0, max_stops=2, wear_limit_pct=40.0)
+    specs = _specs(wear=(6.0, 4.0, 2.5))
+    inv = {18: [0.0, 18.0], 19: [12.0], 20: [0.0]}
+    plans = optimise(specs, params, inv)
+    assert plans[0].race_time == pytest.approx(_brute_force_sets(specs, params, inv), abs=1e-6)
+
+
+def test_no_inventory_is_the_old_model():
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    plenty = {c: [0.0] * 4 for c in (18, 19, 20)}
+    a, b = optimise(specs, params), optimise(specs, params, plenty)
+    assert [(p.compounds, p.stints) for p in a] == [(p.compounds, p.stints) for p in b]
+    assert a[0].race_time == pytest.approx(b[0].race_time)
+
+
+def test_a_compound_runs_no_more_stints_than_you_have_sets():
+    params = RaceParams(laps=40, pit_loss_s=18.0, base_pace_s=90.0)
+    specs = _specs(0.9, 0.7, 0.5, wear=(3.0, 2.5, 2.0))
+    free = optimise(specs, params)[0]
+    assert max(free.compounds.count(c) for c in set(free.compounds)) >= 2  # the free plan repeats a compound
+    inv = {18: [0.0], 19: [0.0], 20: [0.0]}
+    for p in optimise(specs, params, inv):
+        assert all(p.compounds.count(c) <= 1 for c in p.compounds)
+    no_soft = optimise(specs, params, {19: [0.0, 0.0], 20: [0.0, 0.0]})
+    assert no_soft and all(18 not in p.compounds for p in no_soft)
+
+
+def test_a_used_set_is_slower_and_runs_fewer_laps():
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    new = optimise(specs, params, {c: [0.0, 0.0] for c in (18, 19, 20)})[0]
+    worn = optimise(specs, params, {c: [20.0, 20.0] for c in (18, 19, 20)})[0]
+    assert worn.race_time > new.race_time
+    assert all(w == 20.0 for w in worn.start_wear) and "(used 20%)" in worn.describe({s.code: s for s in specs})
+    caps = {s.code: s.max_laps(60.0, 30, 20.0) for s in specs}  # (60 - 20) / rate
+    assert caps == {18: 5, 19: 8, 20: 11}
+    assert all(n <= caps[c] for c, n in zip(worn.compounds, worn.stints))
+    assert float(np.sum(lap_times(worn, specs, params))) == pytest.approx(worn.race_time, abs=1e-6)
+
+
+def test_a_set_past_the_wear_limit_is_not_used_and_freshest_goes_first():
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    costs = _Costs(specs, params, {18: [70.0, 10.0, 0.0]})
+    assert [s.wear for s in costs.sets[18]] == [0.0, 10.0]
+    assert costs.n_sets(19) == 0
+    assert optimise(specs, params, {18: [80.0], 19: [90.0], 20: [75.0]}) == []
+
+
+def test_race_calls_and_live_fit_follow_the_sets():
+    from telemetry.strategy import plan_from_state
+
+    params = RaceParams(laps=30, pit_loss_s=22.0, base_pace_s=90.0, wear_limit_pct=60.0)
+    specs = _specs(0.6, 0.45, 0.3, wear=(8.0, 5.0, 3.5))
+    inv = {18: [0.0], 19: [0.0, 20.0], 20: [0.0]}
+    plan = optimise(specs, params, inv)[0]
+    calls = race_calls(plan, specs, params, inv)
+    assert len(calls) == params.laps - 1
+    # live: 8 laps to go on 5-lap-old softs; the free model fits a hard, with no hard left it cannot
+    free = plan_from_state(specs, params, lap=22, compound=18, age=5, used={18})
+    st = plan_from_state(specs, params, lap=22, compound=18, age=5, used={18}, inventory={19: [0.0]})
+    assert free["fit_compound"] == 20 and free["sets_left"] is None
+    assert st["fit_compound"] == 19 and st["sets_left"] == {"18": 0, "19": 1, "20": 0}
+    used_m = plan_from_state(specs, params, lap=22, compound=18, age=5, used={18}, inventory={19: [25.0]})
+    assert used_m["fit_compound"] == 19 and used_m["fit_wear"] == 25.0 and "(used 25%)" in used_m["fit_label"]

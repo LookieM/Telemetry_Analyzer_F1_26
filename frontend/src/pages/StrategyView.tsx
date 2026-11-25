@@ -8,6 +8,7 @@ import { DataTable, ErrorBox, Loading, Metric, MetricRow, Panel, RecordTable, ty
 import { TRACK_STATES, TYRE_STATE_LABEL } from "../lib/constants"
 import { fmt, formatRaceTime, fmtSigned, windowsText } from "../lib/format"
 import { raceTrace, type StintRow } from "../lib/traces"
+import { TyreSetsPanel } from "./TyreSetsPanel"
 
 type ParamKey = keyof RaceParams
 type SpecEdit = Partial<Pick<CompoundSpec, "use" | "offset_s" | "deg_s_per_lap" | "wear_pct_per_lap" | "warmup_s">>
@@ -26,6 +27,7 @@ function planSegments(plan: PlanJson, data: OptimisePayload): StintRow[] {
   let lap = 1
   return plan.compounds.map((code, i) => {
     const n = plan.stints[i]
+    const wear = plan.start_wear?.[i] ?? 0
     const entry = data.allocation[String(code)]
     const spec = data.specs.find((s) => s.code === code)
     const role = entry?.role ?? null
@@ -34,7 +36,7 @@ function planSegments(plan: PlanJson, data: OptimisePayload): StintRow[] {
       to: lap + n - 1,
       color: spec?.color ?? entry?.color ?? "#8A9099",
       text: role || spec?.label || String(code),
-      title: `${spec?.label ?? code} · L${lap}–${lap + n - 1}`,
+      title: `${spec?.label ?? code}${wear >= 0.5 ? ` (used ${Math.round(wear)}%)` : ""} · L${lap}–${lap + n - 1}`,
       light: role === "H",
     }
     lap += n
@@ -72,6 +74,7 @@ export function StrategyView({ track, state, onStateChange, review, testId }: Pr
   const [paramEdits, setParamEdits] = useState<Partial<RaceParams>>({})
   const [specEdits, setSpecEdits] = useState<Record<number, SpecEdit>>({})
   const [panel, setPanel] = useState<"sensitivity" | "calls" | "review">(review ? "review" : "sensitivity")
+  const [useInventory, setUseInventory] = useState(true)
   const save = useSaveOverrides()
   const clear = useClearOverrides()
 
@@ -86,8 +89,9 @@ export function StrategyView({ track, state, onStateChange, review, testId }: Pr
       state,
       params: paramEdits,
       specs: Object.entries(specEdits).map(([code, e]) => ({ code: Number(code), ...e })),
+      use_inventory: useInventory,
     }),
-    [track, state, paramEdits, specEdits],
+    [track, state, paramEdits, specEdits, useInventory],
   )
   const debounced = useDebounced(request, 350)
   const opt = useOptimise(debounced)
@@ -186,6 +190,8 @@ export function StrategyView({ track, state, onStateChange, review, testId }: Pr
               </label>
             </div>
           </Panel>
+
+          <TyreSetsPanel track={data.track} inventory={data.inventory} specs={data.specs} useInventory={useInventory} onUseInventory={setUseInventory} />
 
           <Panel
             title="Compound model — edit any value; the plan updates immediately"

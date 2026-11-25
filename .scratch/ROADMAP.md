@@ -25,3 +25,4 @@ Next: real-game check in practice (engineer corner A/B, live duel), then phase 5
    - 11 raw track names in Library / session header; 12 small UI / data items
 3. **Triage the open design tickets** with the driver (grilling): 02 live wear in the strategy, 06 engineer A/B order + detectable difference, 09 corner detection (flat corners, complexes, names), 05 rejoin position / VSC factor, 10 generator uses driven setups.
 4. Later: 14 retire Streamlit (port or drop the gap list), 15 architecture seams, then phase 5.3+ (Energy, Setup/stints, Debrief, Track page).
+5. **Feature ideas** (2026-10-27, from comparing other apps and real F1): `.scratch/ideas/summary.md`, tickets `ideas/issues/01-10`, all needs-triage — triage after the review fixes; ideas 06 / 10 shape phase 5.3 Energy / Debrief.

@@ -1,0 +1,125 @@
+export const MAX_TAGS = 3;
+const TAG_LABELS = {
+    entry_slow: "Entry · slow corners",
+    entry_fast: "Entry · fast corners",
+    mid_slow: "Mid · slow corners",
+    mid_fast: "Mid · fast corners",
+    exit_slow: "Exit · slow corners",
+    exit_fast: "Exit · fast corners",
+    braking_stability: "Braking stability",
+    braking_lockups: "Brake lock-ups",
+    traction: "Traction",
+    kerbs: "Kerbs",
+    confidence: "Confidence",
+};
+export function tagLabel(id) {
+    return TAG_LABELS[id] ?? id.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+/** "m:ss" for a time budget; "—" when unknown. */
+export function fmtBudget(s) {
+    if (s == null || !Number.isFinite(s))
+        return "—";
+    const t = Math.max(0, Math.round(s));
+    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
+}
+/** Signed seconds with a real minus sign, e.g. "+0.123" / "−0.050". */
+export function fmtDelta(s, digits = 3) {
+    if (s == null || !Number.isFinite(s))
+        return "—";
+    const r = Math.abs(s).toFixed(digits);
+    if (Number(r) === 0)
+        return (0).toFixed(digits);
+    return `${s > 0 ? "+" : "−"}${r}`;
+}
+/** Plain-English stopwatch line for a result (variant 2 minus variant 1; negative = 2 faster). */
+export function stopwatchLine(r) {
+    if (r.delta_s == null)
+        return "No stopwatch comparison yet";
+    const noise = r.noise_s != null ? ` (noise ±${r.noise_s.toFixed(2)} s)` : "";
+    if (!r.measurable || !r.stopwatch_winner)
+        return `No measurable difference: ${fmtDelta(r.delta_s, 2)} s/lap${noise}`;
+    return `Variant ${r.stopwatch_winner} faster by ${Math.abs(r.delta_s).toFixed(3)} s/lap${noise}`;
+}
+export function confidenceLabel(c) {
+    return c === "high" ? "high confidence" : c === "medium" ? "medium confidence" : "low confidence";
+}
+export function toggleTag(tags, tag, max = MAX_TAGS) {
+    if (tags.includes(tag))
+        return tags.filter((t) => t !== tag);
+    return tags.length >= max ? tags : [...tags, tag];
+}
+/** null when the answer can be sent, else the reason it cannot. */
+export function validateAnswer(a, allowedTags) {
+    if (a.verdict !== "1" && a.verdict !== "2" && a.verdict !== "same")
+        return "Pick 1, 2 or Same first";
+    if (a.strength !== "slight" && a.strength !== "clear")
+        return "Pick how strong the difference was";
+    if (a.tags.length > MAX_TAGS)
+        return `At most ${MAX_TAGS} tags`;
+    if (new Set(a.tags).size !== a.tags.length)
+        return "Duplicate tags";
+    const bad = a.tags.find((t) => !allowedTags.includes(t));
+    if (bad)
+        return `Unknown tag: ${bad}`;
+    return null;
+}
+export function buildAnswer(a) {
+    const note = a.note.trim();
+    return { verdict: a.verdict, strength: a.strength, tags: a.tags, ...(note ? { note } : {}) };
+}
+/** Which main panel the card shows for a view (null view or idle = start). */
+export function engineerPanel(v) {
+    if (!v || v.phase === "idle")
+        return "start";
+    if (v.revert_proposal)
+        return "revert";
+    if (v.question.awaiting_confirm)
+        return "confirm";
+    if (v.question.pending)
+        return "question";
+    if (v.phase === "done")
+        return "done";
+    if (v.phase === "long_run")
+        return "long_run";
+    if (v.phase === "quali")
+        return "quali";
+    return "run";
+}
+export const PHASE_LABEL = { balance: "Balance", quali: "Quali check", long_run: "Long run", done: "Finished", idle: "Idle" };
+/** Value shown for a variant: its text, else its display number, else "reference". */
+export function variantValue(v, which) {
+    const t = v.variant_text?.[which];
+    if (t)
+        return t;
+    const x = v.variants?.[which];
+    return x == null ? "reference" : String(x);
+}
+/** Error text for a failed command (409 carries the engineer's reason). */
+export function commandError(status, message) {
+    if (status === 503)
+        return "Live telemetry is disabled on the server";
+    if (status === 401)
+        return "Access token needed - open the page with ?token=...";
+    return message || "Command failed";
+}
+/** "T4 exit: 2 −0.08 s, rear slip −3.0 %, understeer +0.4°" (variant 2 minus 1; parts without a value are left out). */
+export function cornerRowLine(c) {
+    const parts = [`2 ${fmtDelta(c.delta_s, 2)} s`];
+    if (c.traction_delta != null && Number.isFinite(c.traction_delta)) {
+        const pct = c.traction_delta * 100;
+        parts.push(`rear slip ${Math.abs(pct) < 0.05 ? "0.0" : `${pct > 0 ? "+" : "−"}${Math.abs(pct).toFixed(1)}`} %`);
+    }
+    if (c.understeer_delta_deg != null && Number.isFinite(c.understeer_delta_deg)) {
+        const u = c.understeer_delta_deg;
+        parts.push(`understeer ${Math.abs(u) < 0.05 ? "0.0" : `${u > 0 ? "+" : "−"}${Math.abs(u).toFixed(1)}`}°`);
+    }
+    return `${c.name} ${c.phase}: ${parts.join(", ")}`;
+}
+/** Mark, class and sentence of one tag check line: ✓ agrees, ✗ disagrees, · nothing to say. */
+export function tagCheckLine(t) {
+    if (t.agrees === true)
+        return { mark: "✓", cls: "agree", text: t.text };
+    if (t.agrees === false)
+        return { mark: "✗", cls: "disagree", text: t.text };
+    return { mark: "·", cls: "none", text: t.text };
+}

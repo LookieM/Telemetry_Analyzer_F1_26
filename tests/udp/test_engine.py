@@ -222,3 +222,28 @@ def test_engine_reorders_the_engineer_for_an_active_generator_baseline(tmp_path)
     assert gen[0] == "arb_setup_0"
     other = _engineer_params_for_baseline(tmp_path / "b", "manual", meta)
     assert other == [k for k in PARAM_ORDER if k in other] and other[0] == PARAM_ORDER[0]
+
+
+def test_engine_hands_over_the_tyre_sets_when_they_change(tmp_path, monkeypatch):
+    import telemetria_server.live.engine as eng
+
+    monkeypatch.setattr(eng, "INVENTORY_SAVE_S", 0.0)
+    (tmp_path / "data").mkdir()
+    s = LiveState()
+    e = LiveEngine(s, tmp_path)
+    payloads = []
+    for i, (t, d) in enumerate(iter_capture(CAP)):
+        s.feed(d, t)
+        if i % 120 == 0:
+            e.tick()
+            if e.tyre_inventory_pending:
+                payloads.append(e.tyre_inventory_pending)
+                e.tyre_inventory_pending = None
+        if i > 60_000:
+            break
+    assert len(payloads) >= 2  # the fitted set wears, so the snapshot changes
+    first = payloads[0]
+    assert first["track"] == "Spa" and first["session_type"] == "Race"
+    avail = sorted((x["compound"], x["wear"]) for x in first["sets"] if x["available"] and x["compound"] in (17, 18, 19))
+    assert avail == [(17, 0), (17, 0), (17, 4), (18, 0), (18, 0), (19, 0)]  # a Q-used soft, the rest new
+    assert sum(x["fitted"] for x in first["sets"]) == 1

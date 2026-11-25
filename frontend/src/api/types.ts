@@ -365,6 +365,34 @@ export interface PlanJson {
   race_time: number
   label: string
   delta_best?: number
+  /** Wear % of each stint's set when fitted (0 = new). */
+  start_wear?: number[]
+}
+
+export interface TyreSet {
+  compound: number
+  wear: number
+  available: boolean
+  fitted?: boolean
+}
+
+export interface TyreInventory {
+  track: string
+  sets: TyreSet[]
+  source: "game" | "manual"
+  session_type: string | null
+  updated_at: string
+}
+
+export interface TyreInventoryPayload extends TyreInventory {
+  /** True when the plan was limited to these sets. */
+  used: boolean
+  by_compound: Record<string, { label: string; in_model: boolean; new: number; used: number[] }>
+}
+
+export interface TyreSetsPayload {
+  track: string
+  inventory: TyreInventory | null
 }
 
 export interface RaceTrace {
@@ -385,6 +413,7 @@ export interface OptimisePayload {
   sources: number[]
   saved_overrides: boolean
   allocation: Record<string, AllocationEntry>
+  inventory: TyreInventoryPayload | null
   plans: PlanJson[]
   best?: PlanJson
   sensitivity: TableRow[]
@@ -423,6 +452,7 @@ export interface OptimiseRequest {
   state: string
   params?: Partial<RaceParams>
   specs?: Partial<CompoundSpec>[]
+  use_inventory?: boolean
 }
 
 export interface OverridesPayload {

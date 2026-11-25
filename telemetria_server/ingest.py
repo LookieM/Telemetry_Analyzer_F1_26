@@ -205,6 +205,9 @@ class UdpIngest:
                 if self.engine.game_tyres_pending is not None:
                     payload, self.engine.game_tyres_pending = self.engine.game_tyres_pending, None
                     self._spawn(self._store_game_tyres(payload))
+                if self.engine.tyre_inventory_pending is not None:
+                    payload, self.engine.tyre_inventory_pending = self.engine.tyre_inventory_pending, None
+                    self._spawn(self._store_tyre_inventory(payload))
                 if self.engine.engineer_save_pending is not None:
                     result, self.engine.engineer_save_pending = self.engine.engineer_save_pending, None
                     self._spawn(self._store_engineer(result))
@@ -253,6 +256,15 @@ class UdpIngest:
             log.info("Setup duel stored for %s (id %s, winner %s)", result.get("track"), duel_id, result.get("winner"))
         except Exception:
             log.exception("could not store the setup duel")
+
+    async def _store_tyre_inventory(self, payload: dict) -> None:
+        from telemetry.tyre_inventory import save_inventory
+
+        try:
+            await asyncio.to_thread(save_inventory, payload["track"], payload["sets"], source="game",
+                                    session_type=payload["session_type"], app_root=self.cfg.app_root)
+        except Exception:
+            log.exception("could not store the tyre sets")
 
     async def _store_game_tyres(self, payload: dict) -> None:
         from telemetry.compounds import save_game_tyres
